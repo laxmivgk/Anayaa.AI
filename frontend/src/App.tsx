@@ -105,14 +105,14 @@ const GUIDANCE_LABELS: Record<string, string> = {
   "one-line summary": "One-line summary",
   summary: "One-line summary",
   reflection: "Reflection",
-  judgment: "Judgment",
-  judgement: "Judgment",
+  judgment: "Judgement",
+  judgement: "Judgement",
   "next step": "Next step",
   action: "Next step",
   "scripture grounding": "Scripture grounding",
   grounding: "Scripture grounding",
 };
-const DETAIL_GUIDANCE_LABELS = new Set(["Reflection", "Judgment", "Next step", "Scripture grounding"]);
+const DETAIL_GUIDANCE_LABELS = new Set(["Reflection", "Judgement", "Next step", "Scripture grounding"]);
 
 function decodeBase64Url(value: string): string {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");

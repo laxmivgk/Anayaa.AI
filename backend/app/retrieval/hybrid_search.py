@@ -57,6 +57,8 @@ CONCEPT_CLOUDS: dict[str, list[str]] = {
     "love": ["goodwill", "friend", "protect", "empathy", "care", "heart", "mother", "compassion"],
     "peace": ["calm", "mind", "intellect", "present", "trust", "silence", "purity"],
     "dharma": ["duty", "path", "living", "moral", "integrity", "righteousness"],
+    "identity": ["self", "soul", "purpose", "path", "authenticity", "duty", "mind", "roles", "labels"],
+    "livelihood": ["job", "jobs", "work", "career", "needs", "need", "responsibility", "wealth", "burden", "choice", "randomly"],
 }
 
 
@@ -71,7 +73,7 @@ def execute_hybrid_search(
         query_words = [
             w
             for w in re.sub(r"[^\w\s]", " ", query.lower()).split()
-            if len(w) > 3
+            if len(w) > 3 or w in {"job"}
         ]
 
     for verse in corpus:
@@ -134,6 +136,7 @@ def rerank_candidates(candidates: list[dict[str, Any]], query: str, top_k: int =
 
 def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
     query_terms = set(re.findall(r"\b\w+\b", query.lower()))
+    expanded_query_terms = _expand_terms_with_concepts(query_terms)
     reranked = []
     for item in candidates:
         verse = item["verse"]
@@ -142,7 +145,8 @@ def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: in
             f"{' '.join(str(keyword) for keyword in verse.get('keywords', []))}"
         ).lower()
         overlap = sum(1 for t in query_terms if len(t) > 3 and t in text)
-        bonus = overlap * 3
+        concept_overlap = sum(1 for t in expanded_query_terms - query_terms if len(t) > 3 and t in text)
+        bonus = min(18, overlap * 3 + concept_overlap * 3)
         sort_score = item["score"] + bonus
         reranked.append(
             {
@@ -154,6 +158,16 @@ def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: in
         )
     reranked.sort(key=lambda x: x["_sortScore"], reverse=True)
     return [{k: v for k, v in item.items() if k != "_sortScore"} for item in reranked[:top_k]]
+
+
+def _expand_terms_with_concepts(query_terms: set[str]) -> set[str]:
+    expanded = set(query_terms)
+    for term in query_terms:
+        for concept, related_terms in CONCEPT_CLOUDS.items():
+            if term == concept or term in related_terms:
+                expanded.add(concept)
+                expanded.update(related_terms)
+    return expanded
 
 
 @lru_cache

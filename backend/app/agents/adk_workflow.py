@@ -67,55 +67,6 @@ QUERY_STOPWORDS = {
     "ensuring",
 }
 
-MORAL_QUERY_TERMS = {
-    "angry",
-    "anger",
-    "anxious",
-    "anxiety",
-    "argue",
-    "betray",
-    "betrayed",
-    "betrayal",
-    "blame",
-    "business",
-    "care",
-    "cheat",
-    "cheated",
-    "company",
-    "compassion",
-    "confess",
-    "conflict",
-    "decision",
-    "dilemma",
-    "duty",
-    "fair",
-    "forgive",
-    "forgiveness",
-    "friend",
-    "guilt",
-    "harm",
-    "honest",
-    "honesty",
-    "hurt",
-    "integrity",
-    "jealous",
-    "kind",
-    "lied",
-    "lie",
-    "lying",
-    "moral",
-    "peace",
-    "relationship",
-    "revenge",
-    "responsibility",
-    "right",
-    "selfish",
-    "survive",
-    "truth",
-    "trust",
-    "wrong",
-}
-
 SCRIPTURE_BRIDGES = {
     "betray": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
     "betrayed": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
@@ -135,8 +86,20 @@ SCRIPTURE_BRIDGES = {
     "anxious": {"anxiety", "worry", "peace", "trust"},
     "anxiety": {"anxiety", "worry", "peace", "trust"},
     "hurt": {"harm", "compassion", "care", "peace"},
+    "identity": {"identity", "self", "soul", "duty", "path", "authenticity"},
+    "job": {"job", "work", "career", "duty", "livelihood", "responsibility"},
+    "jobs": {"job", "work", "career", "duty", "livelihood", "responsibility"},
+    "livelihood": {"livelihood", "work", "career", "duty", "wealth", "responsibility"},
+    "need": {"needs", "responsibility", "duty", "livelihood", "wealth", "burden"},
+    "needs": {"needs", "responsibility", "duty", "livelihood", "wealth", "burden"},
     "partner": {"relationship", "fairness", "trust", "integrity", "business", "friend"},
+    "path": {"identity", "path", "duty", "authenticity", "purpose"},
+    "purpose": {"purpose", "duty", "path", "identity", "soul", "responsibility"},
+    "random": {"choice", "discernment", "duty", "wisdom", "responsibility"},
+    "randomly": {"choice", "discernment", "duty", "wisdom", "responsibility"},
     "revenge": {"revenge", "retaliation", "forgiveness", "patience", "peace", "goodness"},
+    "self": {"self", "mind", "soul", "identity", "duty", "growth"},
+    "soul": {"soul", "identity", "integrity", "purpose", "responsibility"},
     "survive": {"hardship", "hope", "ease", "duty", "work", "strength", "responsibility"},
     "trust": {"truth", "faith", "trust", "integrity"},
 }
@@ -179,17 +142,10 @@ def _nested_exception(exc: BaseException, exc_type: type[BaseException]) -> Base
 
 def _query_terms(query: str) -> list[str]:
     terms: list[str] = []
-    for term in re.findall(r"\b[a-zA-Z][a-zA-Z]{3,}\b", query.lower()):
+    for term in re.findall(r"\b[a-zA-Z][a-zA-Z]{2,}\b", query.lower()):
         if term not in QUERY_STOPWORDS and term not in terms:
             terms.append(term)
     return terms
-
-
-def _is_moral_guidance_query(query: str) -> bool:
-    lowered = query.lower()
-    if any(phrase in lowered for phrase in ["should i", "is it right", "is it wrong", "what should i do"]):
-        return True
-    return bool(set(_query_terms(query)) & MORAL_QUERY_TERMS)
 
 
 def _retrieval_matches_query(query: str, reranked: list[dict[str, Any]]) -> bool:
@@ -392,25 +348,6 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     search_query = payload.get("reactSearchQuery") or dilemma
     keywords = payload.get("keywords", [])
-    if not _is_moral_guidance_query(dilemma):
-        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-        if eco:
-            eco.track_stage("Retriever", confidence=0)
-        return {
-            **payload,
-            "searchQuery": dilemma,
-            "retrievalQueries": [dilemma],
-            "multiQueryUsed": False,
-            "hybridSource": None,
-            "candidatesCount": 0,
-            "rerankedCitations": [],
-            "citations": [],
-            "retrievalViaMcp": False,
-            "contextSufficient": False,
-            "topRetrievalScore": 0,
-            "retrievalThreshold": settings.retrieval_confidence_threshold,
-            "retrievalBlocked": "out_of_scope_query",
-        }
 
     sub_queries = [
         str(query).strip()
@@ -631,17 +568,11 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
                 top_score=float(payload.get("topRetrievalScore", 0)),
                 threshold=float(payload.get("retrievalThreshold", settings.retrieval_confidence_threshold)),
             )
-            if payload.get("retrievalBlocked") == "out_of_scope_query":
-                result["failureReason"] = "out_of_scope_query"
-                result["userMessage"] = (
-                    "This does not look like a moral dilemma or relationship decision that Anayaa can ground in "
-                    "scripture. Please ask about a real choice, conflict, responsibility, or value you are weighing."
-                )
-            elif payload.get("retrievalBlocked") == "retrieval_not_relevant_to_query":
+            if payload.get("retrievalBlocked") == "retrieval_not_relevant_to_query":
                 result["failureReason"] = "retrieval_not_relevant_to_query"
                 result["userMessage"] = (
                     "Anayaa found scripture passages, but they were not closely related to your actual question. "
-                    "To avoid an unsupported answer, please rephrase the dilemma with clearer moral themes."
+                    "To avoid an unsupported answer, please rephrase the dilemma with clearer life context."
                 )
         result["pipeline"] = "Google ADK ReAct Workflow + MCP Milvus Retrieval"
         result["originalQuery"] = payload.get("originalQuery") or ctx.state.get("original_dilemma") or result.get("originalQuery")
