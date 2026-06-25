@@ -157,6 +157,25 @@ When `preSynthesisVerification: false`, the same retrieval and synthesis workflo
 
 The planner and reranker preserve concrete dilemma terms such as `business`, `betrayal`, `partner`, `revenge`, `company`, and `financial` so practical business-survival questions do not collapse into generic moral advice. The synthesis prompt also asks for richer scripture grounding and practical next steps when the dilemma involves business or money.
 
+### Pre-Synthesis Verification
+
+When the frontend sends `preSynthesisVerification: true`, the workflow can stop before synthesis and return `status: awaiting_pre_synthesis_approval`. The response includes a `hitl` payload with:
+
+- `workflowRunId`
+- `approvalTitle`
+- `instructions`
+- `proposedKeywords`
+- `candidateScriptures`
+- `selectedVerseIds`
+
+The user can adjust concepts, select or deselect candidate scriptures, and manually inject a scripture selected from the local scripture database. The frontend then resumes the checkpoint through `POST /api/hitl/resume`.
+
+When `preSynthesisVerification: false`, the same retrieval and synthesis workflow runs directly and returns the resolved guidance without pausing.
+
+### Retrieval Quality Notes
+
+The planner and reranker preserve concrete dilemma terms such as `business`, `betrayal`, `partner`, `revenge`, `company`, and `financial` so practical business-survival questions do not collapse into generic moral advice. The synthesis prompt also asks for richer scripture grounding and practical next steps when the dilemma involves business or money.
+
 ### Hallucination Guarding
 
 Anayaa does not rely only on prompt wording. It also has deterministic gates:
