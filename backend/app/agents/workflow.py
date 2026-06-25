@@ -18,6 +18,8 @@ REWRITE_REPLACEMENTS = {
     r"\bmsg\b": "message",
     r"\btmrw\b": "tomorrow",
     r"\bbcoz\b": "because",
+    r"\bdrops+h+ipping\b": "dropshipping",
+    r"\bscaming\b": "scamming",
 }
 
 PLANNER_STOPWORDS = {
@@ -72,6 +74,7 @@ PLANNER_PRIORITY_TERMS = {
     "company",
     "compassion",
     "conflict",
+    "dropshipping",
     "duty",
     "financial",
     "financially",
@@ -107,6 +110,7 @@ MORAL_REWRITE_TERMS = {
     "betray",
     "cheat",
     "conflict",
+    "dropshipping",
     "forgive",
     "friend",
     "guilt",

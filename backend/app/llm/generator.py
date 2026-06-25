@@ -102,7 +102,7 @@ async def generate_moral_pathway(
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             used_fallback = False
-            if not _is_summary_relevant(safe_dilemma, citations, pathway):
+            if _should_use_grounded_fallback(safe_dilemma, citations, pathway):
                 logger.warning("LLM synthesis drifted from query; using grounded fallback summary")
                 pathway = _build_grounded_fallback_summary(safe_dilemma, citations)
                 used_fallback = True
@@ -142,6 +142,15 @@ def _build_synthesis_prompt(
     tone = tone_msg or "Balanced guidance mode"
     focus_terms = _query_focus_terms(dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
+    business_integrity_instruction = ""
+    if _is_business_integrity_dilemma(dilemma):
+        business_integrity_instruction = (
+            "For this business-integrity question, answer directly whether the business model is automatically wrong: "
+            "say it is not automatically scamming, but it becomes unethical if it hides risk, misleads customers, "
+            "uses unreliable fulfillment, conceals delays, refuses fair refunds, or avoids accountability. "
+            "Do not assume the user has invested money, suffered losses, or already started the business. "
+            "Do not name specific commercial platforms, tools, or companies unless the user named them.\n"
+        )
     return (
         f"Dilemma:\n{dilemma}\n\n"
         f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
@@ -156,6 +165,7 @@ def _build_synthesis_prompt(
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name the source or tradition when useful.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
+        f"{business_integrity_instruction}"
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
         "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', "
@@ -176,18 +186,34 @@ def _visible_dilemma_text(dilemma: str) -> str:
 
 
 def _query_focus_terms(dilemma: str) -> list[str]:
+    dilemma = _visible_dilemma_text(dilemma)
     stopwords = {
         "about",
         "after",
         "again",
+        "asking",
         "because",
         "could",
+        "dharma",
+        "dilemma",
+        "facts",
+        "harmful",
+        "inventing",
+        "kindest",
+        "least",
+        "missing",
+        "most",
+        "provided",
+        "situation",
         "their",
         "there",
         "these",
+        "this",
         "those",
         "through",
         "under",
+        "understand",
+        "user",
         "what",
         "when",
         "where",
@@ -195,6 +221,7 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "while",
         "with",
         "would",
+        "wisest",
         "should",
         "need",
         "want",
@@ -231,6 +258,36 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     return not citation_terms or any(term in pathway_lower for term in citation_terms[:8])
 
 
+def _should_use_grounded_fallback(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
+    if not _is_summary_relevant(dilemma, citations, pathway):
+        return True
+    return _is_business_integrity_dilemma(dilemma) and _business_integrity_answer_drifted(pathway)
+
+
+def _business_integrity_answer_drifted(pathway: str) -> bool:
+    lower = pathway.lower()
+    unsupported_patterns = [
+        r"\byou might be feeling\b",
+        r"\byou may be feeling\b",
+        r"\binvested (?:time|money|.*so far)\b",
+        r"\binitial costs?\b",
+        r"\blosses\b",
+        r"\bshopify\b",
+        r"\boberlo\b",
+        r"\breputable online platforms\b",
+        r"\bsignificant commitments\b",
+    ]
+    if any(re.search(pattern, lower) for pattern in unsupported_patterns):
+        return True
+
+    required_terms = ["dropshipping", "scam"]
+    if not all(term in lower for term in required_terms):
+        return True
+
+    integrity_terms = ["honest", "transparent", "mislead", "customer", "refund", "accountability", "responsibility"]
+    return sum(1 for term in integrity_terms if term in lower) < 2
+
+
 def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any]]) -> str:
     visible_dilemma = _visible_dilemma_text(dilemma)
     dilemma_text = _shorten_sentence(visible_dilemma)
@@ -248,9 +305,20 @@ def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any
             ]
         )
 
+    if _is_business_integrity_dilemma(visible_dilemma):
+        return "\n".join(
+            [
+                f"One-line summary: Treat {dilemma_text} as a business-integrity question, not just a profit question.",
+                "Reflection: A business model is not automatically wrong, but it becomes harmful when it depends on hiding risk, misleading customers, or avoiding responsibility.",
+                "Judgement: Choose transparent selling, reliable fulfillment, and fair customer treatment over quick money.",
+                "Next step: Check supplier reliability, shipping times, refund policies, product quality, and customer disclosures before selling anything.",
+                f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
+            ]
+        )
+
     return "\n".join(
         [
-            f"One-line summary: Focus on the real question you asked: {dilemma_text}.",
+            f"One-line summary: Treat this as a dharma question about {dilemma_text}.",
             "Reflection: The situation needs a careful response, not a rushed or imagined one.",
             "Judgement: Choose the action that is honest, kind, and least harmful.",
             "Next step: Write the concrete choice in front of you, then choose one practical action that protects responsibility, truth, and peace.",
@@ -274,6 +342,13 @@ def _is_livelihood_choice_dilemma(value: str) -> bool:
     livelihood_terms = {"job", "jobs", "work", "career", "livelihood"}
     choice_terms = {"random", "randomly", "needs", "need", "fulfills", "select", "choose"}
     return any(term in lower for term in livelihood_terms) and any(term in lower for term in choice_terms)
+
+
+def _is_business_integrity_dilemma(value: str) -> bool:
+    lower = value.lower()
+    business_terms = {"dropshipping", "business", "selling", "seller", "customer", "profit"}
+    integrity_terms = {"scam", "scamming", "honest", "integrity", "mislead", "fraud", "trust"}
+    return any(term in lower for term in business_terms) and any(term in lower for term in integrity_terms)
 
 
 def _shorten_sentence(value: str, max_words: int = 18) -> str:
