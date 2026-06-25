@@ -4,6 +4,48 @@ from __future__ import annotations
 from typing import Any
 
 
+def _failed_dimension_names(audit: dict[str, Any], min_score: int) -> list[str]:
+    failed = [
+        str(name)
+        for name in audit.get("failedDimensions", [])
+        if str(name).strip()
+    ]
+    for name, value in audit.get("scores", {}).items():
+        if value < min_score and name not in failed:
+            failed.append(name)
+    return failed
+
+
+def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
+    failed_raw = _failed_dimension_names(audit, min_score)
+    failed_display = [name.replace("_", " ") for name in failed_raw]
+    hints = audit.get("revision_hints") or []
+    hint_text = f" {' '.join(hints)}" if hints else ""
+
+    if "harmlessness" in failed_raw:
+        return (
+            "Anayaa generated a draft, but it cannot be shown as final guidance because the safety review flagged "
+            "possible harmful or retaliatory advice. Use The Interactive Guidance to review the proposed concepts "
+            "and scriptures, remove any revenge or retaliation framing, and compile guidance again around lawful "
+            "protection, documentation, calm boundaries, and non-retaliation."
+        )
+
+    if "privacy" in failed_raw:
+        return (
+            "Anayaa generated a draft, but it cannot be shown as final guidance because the privacy review found "
+            "possible exposure of personal identifiers. Human approval cannot override the privacy gate. "
+            "Remove personal details, keep the dilemma general, and compile guidance again. "
+            f"Areas needing improvement: {', '.join(failed_display) or 'privacy'}.{hint_text}"
+        )
+
+    return (
+        "A draft response was generated, but it did not meet the quality and faithfulness thresholds "
+        f"for scripture-grounded guidance (minimum score {min_score}/5 on all audit dimensions). "
+        f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}.{hint_text} "
+        "Use The Interactive Guidance to adjust concepts or scripture selections, then compile the guidance again."
+    )
+
+
 def build_insufficient_context_response(
     *,
     dilemma: str,
@@ -102,22 +144,9 @@ def build_quality_failure_response(
     power_metrics: dict[str, Any],
     min_score: int,
 ) -> dict[str, Any]:
-    failed_dims = [
-        name.replace("_", " ")
-        for name, value in audit.get("scores", {}).items()
-        if value < min_score
-    ]
-    hints = audit.get("revision_hints") or []
-    hint_text = f" {' '.join(hints)}" if hints else ""
-
     return {
         "status": "quality_threshold_not_met",
-        "userMessage": (
-            "A draft response was generated, but it did not meet our quality and faithfulness thresholds "
-            f"for safe dharma guidance (minimum score {min_score}/5 on all audit dimensions). "
-            f"Areas needing improvement: {', '.join(failed_dims) or 'general alignment'}.{hint_text} "
-            "Please refine your question or try again later."
-        ),
+        "userMessage": build_quality_failure_user_message(audit, min_score),
         "failureReason": "audit_threshold_not_met",
         "auditMinScore": min_score,
         "originalQuery": payload.get("dilemma"),

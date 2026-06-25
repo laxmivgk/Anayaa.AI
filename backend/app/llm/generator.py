@@ -75,7 +75,7 @@ async def generate_moral_pathway(
                     ],
                     "stream": False,
                     "keep_alive": "30m",
-                    "options": {"temperature": 0.4, "num_predict": 240, "num_ctx": 2048},
+                    "options": {"temperature": 0.0, "num_predict": 320, "num_ctx": 2048},
                 },
             )
             response.raise_for_status()
@@ -130,13 +130,13 @@ def _build_synthesis_prompt(
         f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
         f"Retrieved scriptures:\n{citations_block}\n\n"
-        "Write the Summary in exactly these 5 short labeled lines, 130 words or fewer total.\n"
-        "Use simple everyday words. Each title must be visible at the start of its own line, followed by 1 short sentence:\n"
-        "One-line summary: answer the dilemma directly.\n"
+        "Write exactly these 5 labeled sections, 180 words or fewer total.\n"
+        "Use simple everyday words. Each title must be visible at the start of its own line:\n"
+        "One-line summary: answer the dilemma directly in one compact sentence.\n"
         "Reflection: explain the feeling or conflict in simple words, without blaming the user.\n"
         "Judgment: say what choice seems wisest and kindest.\n"
-        "Next step: give one small action the user can take today.\n"
-        "Scripture grounding: explain how the retrieved scriptures support the advice in simple words.\n"
+        "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
+        "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name the source or tradition when useful.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
@@ -210,8 +210,8 @@ def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any
             f"One-line summary: Focus on the real question you asked: {dilemma_text}.",
             "Reflection: The situation needs a careful response, not a rushed or imagined one.",
             "Judgment: Choose the action that is honest, kind, and least harmful.",
-            "Next step: Write one clear sentence about what happened and what you will do next.",
-            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to that.",
+            "Next step: Write one clear record of what happened, then choose one practical protection step such as preserving documents, reviewing cash needs, or seeking neutral professional advice.",
+            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or retaliation.",
         ]
     )
 

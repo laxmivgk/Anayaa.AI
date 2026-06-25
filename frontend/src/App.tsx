@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BookOpen, Leaf, Shield, Sparkles } from "lucide-react";
 
 type Tab = "pathway" | "scriptures" | "eco";
+type LoadingAction = "interactive-guidance" | "guidance" | "compile-guidance" | "cancel-guidance" | null;
 
 const SESSION_WARNING_MS = 60_000;
+const SESSION_REFRESH_THRESHOLD_MS = 5 * 60_000;
+const SESSION_REFRESH_COOLDOWN_MS = 30_000;
 const STORED_CONVERSATION_HISTORY = 2;
 const PREVIOUS_CONVERSATION_LIMIT = 1;
 
@@ -23,6 +26,7 @@ interface AuditScores {
   scores: Record<string, number>;
   passed: boolean;
   rationale: string;
+  failedDimensions?: string[];
   judgeModel?: string;
 }
 
@@ -54,10 +58,29 @@ interface QueryResult {
   ecoBreakdown?: Array<{ stage: string; energyWh: number; co2Kg: number; durationMs: number }>;
   auditScores?: AuditScores;
   status?: string;
-  hitl?: { workflowRunId: string; draftPathway: string };
+  hitl?: HitlState;
   quantizedMetrics?: Record<string, unknown>;
   synthesisEngine?: string;
   executionPlan?: string[];
+  rerankedCitations?: RetrievalCandidate[];
+}
+
+interface RetrievalCandidate {
+  verse: ScriptureVerse;
+  score?: number;
+  method?: string;
+  rerankBoost?: number;
+}
+
+interface HitlState {
+  workflowRunId: string;
+  stage?: string;
+  approvalTitle?: string;
+  instructions?: string;
+  proposedKeywords?: string[];
+  candidateScriptures?: RetrievalCandidate[];
+  selectedVerseIds?: string[];
+  draftPathway?: string;
 }
 
 interface QuestionHistoryItem {
@@ -72,6 +95,11 @@ interface GuidanceSection {
   text: string;
 }
 
+interface GuidanceDisplay {
+  summaryText: string;
+  detailSections: GuidanceSection[];
+}
+
 const GUIDANCE_LABELS: Record<string, string> = {
   "one line summary": "One-line summary",
   "one-line summary": "One-line summary",
@@ -84,6 +112,7 @@ const GUIDANCE_LABELS: Record<string, string> = {
   "scripture grounding": "Scripture grounding",
   grounding: "Scripture grounding",
 };
+const DETAIL_GUIDANCE_LABELS = new Set(["Reflection", "Judgment", "Next step", "Scripture grounding"]);
 
 function decodeBase64Url(value: string): string {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -103,10 +132,14 @@ function getJwtExpiryMs(jwtToken: string | null): number | null {
   }
 }
 
-function resultStatusTitle(status?: string): string {
+function resultStatusTitle(result?: QueryResult | null): string {
+  const status = result?.status;
+  const failedDimensions = result?.auditScores?.failedDimensions || [];
   if (status === "retrieval_unavailable") return "Scripture Retrieval Service Unavailable";
   if (status === "insufficient_context") return "No Relevant Scripture Context";
-  if (status === "quality_threshold_not_met") return "Quality Threshold Not Met";
+  if (status === "quality_threshold_not_met" && failedDimensions.includes("harmlessness")) return "Safety Review Required";
+  if (status === "quality_threshold_not_met" && failedDimensions.includes("privacy")) return "Privacy Review Required";
+  if (status === "quality_threshold_not_met") return "Guidance Needs Review";
   return "Workflow Notice";
 }
 
@@ -169,6 +202,32 @@ function guidanceSections(pathway?: string | null): GuidanceSection[] {
   return sections;
 }
 
+function guidanceDisplay(sections: GuidanceSection[]): GuidanceDisplay {
+  const summaryParts: string[] = [];
+  const detailSections: GuidanceSection[] = [];
+  let reachedDetails = false;
+
+  for (const section of sections) {
+    if (section.label && DETAIL_GUIDANCE_LABELS.has(section.label)) {
+      reachedDetails = true;
+      detailSections.push(section);
+      continue;
+    }
+
+    if (!reachedDetails && (!section.label || section.label === "One-line summary")) {
+      summaryParts.push(section.text);
+      continue;
+    }
+
+    detailSections.push(section);
+  }
+
+  return {
+    summaryText: summaryParts.join(" ").replace(/\s+/g, " ").trim(),
+    detailSections,
+  };
+}
+
 function responseText(result?: QueryResult | null): string {
   return result?.moralPathway || result?.hitl?.draftPathway || result?.userMessage || result?.failureReason || "";
 }
@@ -197,6 +256,22 @@ function saveConversationHistory(userEmail: string, items: QuestionHistoryItem[]
   localStorage.setItem(conversationHistoryKey(userEmail), JSON.stringify(items.slice(0, STORED_CONVERSATION_HISTORY)));
 }
 
+function scriptureTitle(scripture: ScriptureVerse): string {
+  return `${scripture.source} — ${scripture.chapter}:${scripture.verse}`;
+}
+
+function scriptureSearchText(scripture: ScriptureVerse): string {
+  return [
+    scriptureTitle(scripture),
+    scripture.faith,
+    scripture.translation,
+    scripture.context,
+    scripture.keywords.join(" "),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
 export default function App() {
   const savedEmail = localStorage.getItem("anayaa_email") || "";
   const [token, setToken] = useState<string | null>(localStorage.getItem("anayaa_jwt"));
@@ -204,7 +279,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [activeTab, setActiveTab] = useState<Tab>("pathway");
   const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
@@ -215,18 +290,25 @@ export default function App() {
   const [showSessionWarning, setShowSessionWarning] = useState(false);
   const [secondsUntilExpiry, setSecondsUntilExpiry] = useState(0);
   const [refreshingSession, setRefreshingSession] = useState(false);
+  const [hitlConcepts, setHitlConcepts] = useState("");
+  const [selectedHitlVerseIds, setSelectedHitlVerseIds] = useState<string[]>([]);
+  const [manualScriptureQuery, setManualScriptureQuery] = useState("");
+  const [selectedManualScriptureId, setSelectedManualScriptureId] = useState<string | null>(null);
+  const [showManualScripturePicker, setShowManualScripturePicker] = useState(false);
+  const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
+  const lastSessionRefreshMs = useRef(0);
 
   const authHeaders = useCallback(
-    () => ({
-      Authorization: `Bearer ${token}`,
+    (jwtToken: string | null = token) => ({
+      Authorization: `Bearer ${jwtToken}`,
       "Content-Type": "application/json",
     }),
     [token]
   );
 
-  const fetchDailyEco = useCallback(async () => {
-    if (!token) return;
-    const res = await fetch("/api/eco/daily", { headers: authHeaders() });
+  const fetchDailyEco = useCallback(async (jwtToken: string | null = token) => {
+    if (!jwtToken) return;
+    const res = await fetch("/api/eco/daily", { headers: authHeaders(jwtToken) });
     if (res.ok) {
       const data = await res.json();
       setDailyEco({
@@ -245,7 +327,7 @@ export default function App() {
     fetch("/api/system/status", { headers: authHeaders() })
       .then((r) => r.json())
       .then(setSystemStatus);
-    fetchDailyEco();
+    fetchDailyEco(token);
   }, [token, authHeaders, fetchDailyEco]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -268,51 +350,98 @@ export default function App() {
     setLoginEmail(data.email);
     setQuery("");
     setResult(null);
+    setCurrentConversationId(null);
     setQuestionHistory(loadConversationHistory(data.email));
     setShowSessionWarning(false);
+    lastSessionRefreshMs.current = Date.now();
   };
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
+    refreshPromiseRef.current = null;
     localStorage.removeItem("anayaa_jwt");
     localStorage.removeItem("anayaa_email");
     setToken(null);
     setEmail("");
     setQuery("");
     setResult(null);
+    setCurrentConversationId(null);
     setQuestionHistory([]);
     setShowSessionWarning(false);
     setSecondsUntilExpiry(0);
-  };
+  }, []);
+
+  const refreshSession = useCallback(
+    async (options: { force?: boolean; showErrors?: boolean } = {}): Promise<string | null> => {
+      const currentToken = localStorage.getItem("anayaa_jwt") || token;
+      if (!currentToken) {
+        handleLogout();
+        return null;
+      }
+
+      const now = Date.now();
+      const expiresAt = getJwtExpiryMs(currentToken);
+      if (!expiresAt || expiresAt <= now) {
+        handleLogout();
+        return null;
+      }
+
+      if (!options.force) {
+        const remainingMs = expiresAt - now;
+        const recentlyRefreshed = now - lastSessionRefreshMs.current < SESSION_REFRESH_COOLDOWN_MS;
+        if (remainingMs > SESSION_REFRESH_THRESHOLD_MS || recentlyRefreshed) {
+          return currentToken;
+        }
+      }
+
+      if (refreshPromiseRef.current) {
+        return refreshPromiseRef.current;
+      }
+
+      refreshPromiseRef.current = (async () => {
+        try {
+          const res = await fetch("/api/auth/refresh", {
+            method: "POST",
+            headers: authHeaders(currentToken),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data.token) {
+            if (options.showErrors) {
+              setError(data.detail || "Could not refresh session. Please log in again.");
+            }
+            handleLogout();
+            return null;
+          }
+
+          localStorage.setItem("anayaa_jwt", data.token);
+          localStorage.setItem("anayaa_email", data.email);
+          setToken(data.token);
+          setEmail(data.email);
+          setQuestionHistory(loadConversationHistory(data.email));
+          setShowSessionWarning(false);
+          setSecondsUntilExpiry(0);
+          lastSessionRefreshMs.current = Date.now();
+          return data.token as string;
+        } catch {
+          if (options.showErrors) {
+            setError("Could not refresh session. Please log in again.");
+          }
+          handleLogout();
+          return null;
+        } finally {
+          refreshPromiseRef.current = null;
+        }
+      })();
+
+      return refreshPromiseRef.current;
+    },
+    [authHeaders, handleLogout, token]
+  );
 
   const handleContinueSession = async () => {
-    if (!email) {
-      handleLogout();
-      return;
-    }
     setRefreshingSession(true);
     setError(null);
     try {
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.detail || "Could not refresh session. Please log in again.");
-        handleLogout();
-        return;
-      }
-      localStorage.setItem("anayaa_jwt", data.token);
-      localStorage.setItem("anayaa_email", data.email);
-      setToken(data.token);
-      setEmail(data.email);
-      setQuestionHistory(loadConversationHistory(data.email));
-      setShowSessionWarning(false);
-      setSecondsUntilExpiry(0);
-    } catch {
-      setError("Could not refresh session. Please log in again.");
-      handleLogout();
+      await refreshSession({ force: true, showErrors: true });
     } finally {
       setRefreshingSession(false);
     }
@@ -321,68 +450,188 @@ export default function App() {
   useEffect(() => {
     if (!token) return;
 
-    const updateSessionWarning = () => {
+    let checkingSession = false;
+    const updateSessionWarning = async () => {
+      if (checkingSession) return;
+      checkingSession = true;
       const expiresAt = getJwtExpiryMs(token);
       if (!expiresAt) {
         handleLogout();
+        checkingSession = false;
         return;
       }
 
       const remainingMs = expiresAt - Date.now();
       if (remainingMs <= 0) {
         handleLogout();
+        checkingSession = false;
         return;
+      }
+
+      if (remainingMs <= SESSION_WARNING_MS && document.visibilityState === "visible") {
+        const refreshedToken = await refreshSession({ force: true });
+        if (refreshedToken) {
+          setShowSessionWarning(false);
+          checkingSession = false;
+          return;
+        }
       }
 
       setSecondsUntilExpiry(Math.ceil(remainingMs / 1000));
       setShowSessionWarning(remainingMs <= SESSION_WARNING_MS);
+      checkingSession = false;
     };
 
     updateSessionWarning();
     const timer = window.setInterval(updateSessionWarning, 1000);
-    return () => window.clearInterval(timer);
-  }, [token]);
+    document.addEventListener("visibilitychange", updateSessionWarning);
+    window.addEventListener("focus", updateSessionWarning);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", updateSessionWarning);
+      window.removeEventListener("focus", updateSessionWarning);
+    };
+  }, [handleLogout, refreshSession, token]);
 
-  const handleQuery = async () => {
+  useEffect(() => {
+    if (result?.status !== "awaiting_pre_synthesis_approval" || !result.hitl) return;
+    setHitlConcepts((result.hitl.proposedKeywords || result.keywords || []).join(", "));
+    setSelectedHitlVerseIds(
+      result.hitl.selectedVerseIds ||
+        (result.hitl.candidateScriptures || [])
+          .map((item) => item.verse?.id || "")
+          .filter((id) => Boolean(id))
+    );
+    setManualScriptureQuery("");
+    setSelectedManualScriptureId(null);
+    setShowManualScripturePicker(false);
+  }, [result]);
+
+  const handleQuery = async (preSynthesisVerification: boolean) => {
     if (!token || !query.trim()) return;
     const submittedQuestion = query.trim();
-    setLoading(true);
+    setLoadingAction(preSynthesisVerification ? "interactive-guidance" : "guidance");
     setError(null);
     setResult(null);
     setCurrentConversationId(null);
     try {
+      const activeToken = await refreshSession();
+      if (!activeToken) return;
       const res = await fetch("/api/query", {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(activeToken),
         body: JSON.stringify({
           query: query.trim(),
-          previousContext: questionHistory[0]
-            ? {
-                question: questionHistory[0].question,
-                response: questionHistory[0].response,
-              }
-            : undefined,
+          preSynthesisVerification,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const response = data.userMessage || data.error || data.detail || "Query failed";
         setError(response);
-        setCurrentConversationId(recordConversation(submittedQuestion, response));
+        if (data.status !== "awaiting_pre_synthesis_approval") {
+          setCurrentConversationId(recordConversation(submittedQuestion, response));
+        }
         if (data.status && data.status !== "service_unavailable") {
           setResult(data);
         }
         return;
       }
       setResult(data);
-      setCurrentConversationId(recordConversation(submittedQuestion, responseText(data) || "No response text returned."));
-      fetchDailyEco();
+      if (data.status !== "awaiting_pre_synthesis_approval") {
+        setCurrentConversationId(recordConversation(submittedQuestion, responseText(data) || "No response text returned."));
+      }
+      fetchDailyEco(activeToken);
     } catch {
       const response = "Could not reach edge server.";
       setError(response);
       setCurrentConversationId(recordConversation(submittedQuestion, response));
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
+    }
+  };
+
+  const resetHitlForm = () => {
+    setHitlConcepts("");
+    setSelectedHitlVerseIds([]);
+    setManualScriptureQuery("");
+    setSelectedManualScriptureId(null);
+    setShowManualScripturePicker(false);
+  };
+
+  const toggleHitlVerse = (verseId: string) => {
+    setSelectedHitlVerseIds((ids) =>
+      ids.includes(verseId) ? ids.filter((id) => id !== verseId) : [...ids, verseId]
+    );
+  };
+
+  const handlePreSynthesisResume = async (decision: "approve" | "reject") => {
+    if (!token || !result?.hitl?.workflowRunId) return;
+    setLoadingAction(decision === "approve" ? "compile-guidance" : "cancel-guidance");
+    setError(null);
+    try {
+      const activeToken = await refreshSession();
+      if (!activeToken) return;
+      const manualPayload = selectedManualScripture
+        ? {
+            faith: selectedManualScripture.faith,
+            source: selectedManualScripture.source,
+            chapter: selectedManualScripture.chapter,
+            verse: selectedManualScripture.verse,
+            translation: selectedManualScripture.translation,
+            context: selectedManualScripture.context,
+            keywords: selectedManualScripture.keywords.join(", "),
+          }
+        : undefined;
+      const res = await fetch("/api/hitl/resume", {
+        method: "POST",
+        headers: authHeaders(activeToken),
+        body: JSON.stringify({
+          workflowRunId: result.hitl.workflowRunId,
+          decision,
+          concepts: hitlConcepts
+            .split(",")
+            .map((concept) => concept.trim())
+            .filter(Boolean),
+          selectedVerseIds: selectedHitlVerseIds,
+          manualVerse: manualPayload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.detail || data.error || "Could not resume the workflow.");
+        return;
+      }
+      const resumed = data.result as QueryResult;
+      setResult(resumed);
+      if (decision === "approve") {
+        setCurrentConversationId(recordConversation(query.trim(), responseText(resumed) || "No response text returned."));
+      }
+      fetchDailyEco(activeToken);
+    } catch {
+      setError("Could not resume the workflow.");
+    } finally {
+      setLoadingAction(null);
+    }
+  };
+
+  const handleClearQuery = () => {
+    setQuery("");
+    setResult(null);
+    setError(null);
+    setCurrentConversationId(null);
+    resetHitlForm();
+    setActiveTab("pathway");
+  };
+
+  const handleQueryChange = (value: string) => {
+    setQuery(value);
+    if (result) {
+      setResult(null);
+      setCurrentConversationId(null);
+    }
+    if (error) {
+      setError(null);
     }
   };
 
@@ -401,33 +650,23 @@ export default function App() {
     return item.id;
   };
 
-  const handleAskAnotherQuestion = () => {
-    setQuery("");
-    setResult(null);
-    setError(null);
-    setCurrentConversationId(null);
-    setActiveTab("pathway");
-  };
-
-  const handleQueryChange = (value: string) => {
-    setQuery(value);
-    if (result) {
-      setResult(null);
-      setCurrentConversationId(null);
-    }
-    if (error) {
-      setError(null);
-    }
-  };
-
   const currentPathway = result?.moralPathway || result?.hitl?.draftPathway || "";
   const currentGuidanceSections = guidanceSections(currentPathway);
-  const mainSummary = currentGuidanceSections.find((section) => section.label === "One-line summary") || currentGuidanceSections[0];
-  const summaryDetails = currentGuidanceSections.filter((section) => section !== mainSummary);
+  const currentGuidanceDisplay = guidanceDisplay(currentGuidanceSections);
+  const loading = loadingAction !== null;
   const previousConversations = questionHistory
     .filter((item) => item.id !== currentConversationId)
     .slice(0, PREVIOUS_CONVERSATION_LIMIT);
   const canSubmitQuery = query.trim().length > 0 && !result;
+  const canClearQuery = query.length > 0 || Boolean(result) || Boolean(error);
+  const isPreSynthesisApproval = result?.status === "awaiting_pre_synthesis_approval" && Boolean(result.hitl);
+  const hitlCandidates = result?.hitl?.candidateScriptures || result?.rerankedCitations || [];
+  const selectedManualScripture = scriptures.find((scripture) => scripture.id === selectedManualScriptureId) || null;
+  const manualScriptureMatches = scriptures.filter((scripture) => {
+    const search = manualScriptureQuery.trim().toLowerCase();
+    if (!search) return true;
+    return scriptureSearchText(scripture).includes(search);
+  });
 
   if (!token) {
     return (
@@ -543,36 +782,171 @@ export default function App() {
                   placeholder="Example: I need to be honest with a close friend, but I am worried the truth will hurt them. How can I respond with compassion and integrity?"
                   className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40]"
                 />
-                <div className="mt-4 flex flex-wrap items-center gap-3">
-                    <button
-                      onClick={handleQuery}
-                      disabled={loading || !canSubmitQuery}
-                      className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                    <Sparkles className="h-4 w-4" />
-                    {loading ? "Processing..." : "Submit"}
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+                  <button
+                    onClick={handleClearQuery}
+                    disabled={loading || !canClearQuery}
+                    className="text-sm font-bold text-[#5A5A40] underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline"
+                    aria-label="Clear query"
+                  >
+                    Clear
                   </button>
-                  {result && (
-                    <button
-                      onClick={handleAskAnotherQuestion}
-                      className="rounded-xl border border-[#D9D2C5] px-5 py-3 text-sm font-bold text-stone-600 hover:bg-[#FBF9F6]"
-                    >
-                      Ask another question
-                    </button>
-                  )}
-                  <span className="font-mono text-xs uppercase tracking-wider text-stone-400">
-                    Local scripture retrieval + synthesis
-                  </span>
+                  <button
+                    onClick={() => handleQuery(true)}
+                    disabled={loading || !canSubmitQuery}
+                    className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {loadingAction === "interactive-guidance" ? "Processing..." : "The Interactive Guidance"}
+                  </button>
+                  <button
+                    onClick={() => handleQuery(false)}
+                    disabled={loading || !canSubmitQuery}
+                    className="flex items-center gap-2 rounded-xl bg-[#786D4B] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    <Sparkles className="h-4 w-4" />
+                    {loadingAction === "guidance" ? "Processing..." : "The Guidance"}
+                  </button>
                 </div>
               </section>
               {error && <p className="text-red-600">{error}</p>}
 
               {result && (
                 <div className="space-y-5">
+                  {isPreSynthesisApproval && (
+                    <section className="rounded-2xl border-2 border-[#5A5A40] bg-white p-6 shadow-sm">
+                      <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+                        {result.hitl?.approvalTitle || "Pre-Synthesis Verification"}
+                      </p>
+                      <h2 className="mt-3 text-2xl italic text-stone-800">Review the retrieval plan</h2>
+                      <p className="mt-2 text-sm leading-6 text-stone-600">
+                        {result.hitl?.instructions}
+                      </p>
+
+                      <label htmlFor="hitl-concepts" className="mt-5 block font-mono text-xs font-bold uppercase tracking-wider text-stone-700">
+                        Concepts
+                      </label>
+                      <input
+                        id="hitl-concepts"
+                        value={hitlConcepts}
+                        onChange={(event) => setHitlConcepts(event.target.value)}
+                        className="mt-2 w-full rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-4 py-3 text-sm outline-none focus:border-[#5A5A40]"
+                      />
+
+                      <div className="mt-5">
+                        <p className="font-mono text-xs font-bold uppercase tracking-wider text-stone-700">
+                          Candidate Scriptures
+                        </p>
+                        <div className="mt-3 space-y-3">
+                          {hitlCandidates.map((item) => {
+                            const verse = item.verse;
+                            if (!verse?.id) return null;
+                            const checked = selectedHitlVerseIds.includes(verse.id);
+                            return (
+                              <label key={verse.id} className="flex gap-3 rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleHitlVerse(verse.id)}
+                                  className="mt-1 h-4 w-4 accent-[#5A5A40]"
+                                />
+                                <span className="block">
+                                  <span className="block text-xs font-bold text-[#5A5A40]">
+                                    {verse.faith} — {verse.source} {verse.chapter}:{verse.verse}
+                                    {item.score !== undefined ? ` · score ${item.score}` : ""}
+                                  </span>
+                                  <span className="mt-1 block text-sm italic text-stone-800">"{verse.translation}"</span>
+                                  {verse.context && (
+                                    <span className="mt-2 block text-xs leading-5 text-stone-500">{verse.context}</span>
+                                  )}
+                                </span>
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="mt-5">
+                        <p className="font-mono text-xs font-bold uppercase tracking-wider text-stone-800">
+                          + Manually inject a specific scripture (human selection)
+                        </p>
+                        <p className="mt-2 text-xs leading-5 text-stone-500">
+                          Browse or search the pre-configured scriptural database to inject custom wisdom into the model synthesis.
+                        </p>
+                        <input
+                          value={manualScriptureQuery}
+                          onFocus={() => setShowManualScripturePicker(true)}
+                          onChange={(event) => {
+                            setManualScriptureQuery(event.target.value);
+                            setSelectedManualScriptureId(null);
+                            setShowManualScripturePicker(true);
+                          }}
+                          placeholder="Type to select scripture by title,text or keywords"
+                          className="mt-3 w-full rounded-xl border-2 border-[#5A5A40] bg-white px-4 py-3 text-sm outline-none"
+                        />
+                        {showManualScripturePicker && (
+                          <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-[#D9D2C5] bg-white shadow-sm">
+                            {manualScriptureMatches.length > 0 ? (
+                              manualScriptureMatches.map((scripture) => {
+                                const selected = selectedManualScriptureId === scripture.id;
+                                return (
+                                  <button
+                                    key={scripture.id}
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedManualScriptureId(scripture.id);
+                                      setManualScriptureQuery(scriptureTitle(scripture));
+                                      setShowManualScripturePicker(false);
+                                    }}
+                                    className={`block w-full border-b border-[#EFE8DD] px-4 py-3 text-left last:border-0 ${selected ? "bg-[#FBF9F6]" : "hover:bg-[#FBF9F6]"}`}
+                                  >
+                                    <span className="flex items-start justify-between gap-3">
+                                      <span>
+                                        <span className="block text-xs font-bold text-[#5A5A40]">
+                                          {scriptureTitle(scripture)}
+                                        </span>
+                                        <span className="mt-1 block truncate text-sm italic text-stone-700">
+                                          "{scripture.translation}"
+                                        </span>
+                                      </span>
+                                      <span className="rounded-full bg-stone-100 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-stone-600">
+                                        {scripture.faith}
+                                      </span>
+                                    </span>
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <p className="px-4 py-3 text-sm text-stone-500">No scriptures match this search.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="mt-5 flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={() => handlePreSynthesisResume("approve")}
+                          disabled={loading || (selectedHitlVerseIds.length === 0 && !selectedManualScripture)}
+                          className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Sparkles className="h-4 w-4" />
+                          {loadingAction === "compile-guidance" ? "Compiling..." : "Compile guidance"}
+                        </button>
+                        <button
+                          onClick={() => handlePreSynthesisResume("reject")}
+                          disabled={loading}
+                          className="rounded-xl border border-[#D9D2C5] px-5 py-3 text-sm font-bold text-stone-600 hover:bg-[#FBF9F6] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {loadingAction === "cancel-guidance" ? "Cancelling..." : "Cancel"}
+                        </button>
+                      </div>
+                    </section>
+                  )}
+
                   {(["retrieval_unavailable", "insufficient_context", "quality_threshold_not_met"].includes(result.status || "")) && result.userMessage && (
                     <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
                       <h3 className="mb-2 font-bold text-amber-900">
-                        {resultStatusTitle(result.status)}
+                        {resultStatusTitle(result)}
                       </h3>
                       <p className="text-sm text-amber-900">{result.userMessage}</p>
                       {result.status === "insufficient_context" && result.topRetrievalScore !== undefined && (
@@ -598,12 +972,12 @@ export default function App() {
                             Summary
                           </h3>
                           <div className="mt-4 text-stone-800">
-                            {mainSummary && (
-                              <p className="text-base leading-7">{mainSummary.text}</p>
+                            {currentGuidanceDisplay.summaryText && (
+                              <p className="text-base leading-7">{currentGuidanceDisplay.summaryText}</p>
                             )}
-                            {summaryDetails.length > 0 && (
+                            {currentGuidanceDisplay.detailSections.length > 0 && (
                               <div className="mt-5 divide-y divide-[#E5DED2]">
-                                {summaryDetails.map((section, index) => (
+                                {currentGuidanceDisplay.detailSections.map((section, index) => (
                                   <div key={`${section.label || "detail"}-${section.text}-${index}`} className="py-3 first:pt-0 last:pb-0">
                                     {section.label && (
                                       <p className="text-sm font-semibold text-[#5A5A40]">
@@ -621,7 +995,7 @@ export default function App() {
                     </section>
                   )}
 
-                {result.citations && result.citations.length > 0 && (
+                {!isPreSynthesisApproval && result.citations && result.citations.length > 0 && (
                   <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
                     <h3 className="font-bold mb-3 flex items-center gap-2">
                       <BookOpen className="w-4 h-4" /> Scripture Evidence
@@ -640,49 +1014,48 @@ export default function App() {
               </div>
             )}
 
-              {previousConversations.length > 0 && (
-                <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
-                  <h3 className="font-bold mb-4">Previous Conversation</h3>
-                  <div className="space-y-4">
-                    {previousConversations.map((item) => {
-                      const responseSections = guidanceSections(item.response);
-                      const historyMainSummary = responseSections.find((section) => section.label === "One-line summary") || responseSections[0];
-                      const historyDetails = responseSections.filter((section) => section !== historyMainSummary);
-                      return (
-                        <article key={item.id} className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-stone-400">
-                            {new Date(item.timestamp).toLocaleString()}
-                          </p>
-                          <div className="mt-3">
-                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Question</p>
-                            <p className="mt-2 text-sm leading-6 text-stone-800">{item.question}</p>
+            {previousConversations.length > 0 && (
+              <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+                <h3 className="font-bold mb-4">Previous Conversation</h3>
+                <div className="space-y-4">
+                  {previousConversations.map((item) => {
+                    const responseSections = guidanceSections(item.response);
+                    const historyDisplay = guidanceDisplay(responseSections);
+                    return (
+                      <article key={item.id} className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-stone-400">
+                          {new Date(item.timestamp).toLocaleString()}
+                        </p>
+                        <div className="mt-3">
+                          <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Question</p>
+                          <p className="mt-2 text-sm leading-6 text-stone-800">{item.question}</p>
+                        </div>
+                        <div className="mt-4">
+                          <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Response</p>
+                          <div className="mt-2 text-sm leading-6 text-stone-800">
+                            {historyDisplay.summaryText && <p>{historyDisplay.summaryText}</p>}
+                            {historyDisplay.detailSections.length > 0 && (
+                              <div className="mt-3 divide-y divide-[#E5DED2]">
+                                {historyDisplay.detailSections.map((section, index) => (
+                                  <div key={`${item.id}-response-${index}`} className="py-2 first:pt-0 last:pb-0">
+                                    {section.label && (
+                                      <p className="text-sm font-semibold text-[#5A5A40]">
+                                        {section.label}
+                                      </p>
+                                    )}
+                                    <p className="mt-1">{section.text}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <div className="mt-4">
-                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Response</p>
-                            <div className="mt-2 text-sm leading-6 text-stone-800">
-                              {historyMainSummary && <p>{historyMainSummary.text}</p>}
-                              {historyDetails.length > 0 && (
-                                <div className="mt-3 divide-y divide-[#E5DED2]">
-                                  {historyDetails.map((section, index) => (
-                                    <div key={`${item.id}-response-${index}`} className="py-2 first:pt-0 last:pb-0">
-                                      {section.label && (
-                                        <p className="text-sm font-semibold text-[#5A5A40]">
-                                          {section.label}
-                                        </p>
-                                      )}
-                                      <p className="mt-1">{section.text}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              )}
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            )}
             </div>
           </div>
         )}

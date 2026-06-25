@@ -1,0 +1,32 @@
+from app.agents.pipeline_messages import build_quality_failure_user_message
+
+
+def test_harmlessness_failure_explains_no_human_override():
+    message = build_quality_failure_user_message(
+        {
+            "scores": {"harmlessness": 2, "faithfulness": 4},
+            "failedDimensions": ["harmlessness"],
+            "revision_hints": ["Remove advice that could cause harm or retaliation."],
+        },
+        min_score=3,
+    )
+
+    assert message == (
+        "Anayaa generated a draft, but it cannot be shown as final guidance because the safety review flagged "
+        "possible harmful or retaliatory advice. Use The Interactive Guidance to review the proposed concepts "
+        "and scriptures, remove any revenge or retaliation framing, and compile guidance again around lawful "
+        "protection, documentation, calm boundaries, and non-retaliation."
+    )
+
+
+def test_quality_failure_points_to_interactive_regeneration():
+    message = build_quality_failure_user_message(
+        {
+            "scores": {"citation_grounding": 2, "faithfulness": 4},
+            "failedDimensions": ["citation_grounding"],
+        },
+        min_score=3,
+    )
+
+    assert "Use The Interactive Guidance" in message
+    assert "try again later" not in message

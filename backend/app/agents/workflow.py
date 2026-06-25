@@ -20,6 +20,59 @@ REWRITE_REPLACEMENTS = {
     r"\bbcoz\b": "because",
 }
 
+PLANNER_STOPWORDS = {
+    "about",
+    "after",
+    "again",
+    "because",
+    "could",
+    "email",
+    "email_redacted",
+    "ensuring",
+    "handle",
+    "phone",
+    "phone_redacted",
+    "please",
+    "redacted",
+    "should",
+    "sudden",
+    "their",
+    "there",
+    "these",
+    "those",
+    "through",
+    "under",
+    "which",
+    "while",
+    "without",
+    "would",
+}
+
+PLANNER_PRIORITY_TERMS = {
+    "anger",
+    "anxiety",
+    "betray",
+    "betrayal",
+    "betrayed",
+    "business",
+    "company",
+    "compassion",
+    "conflict",
+    "duty",
+    "financial",
+    "financially",
+    "forgive",
+    "forgiveness",
+    "honest",
+    "integrity",
+    "partner",
+    "relationship",
+    "revenge",
+    "survive",
+    "truth",
+    "wealth",
+}
+
 MORAL_REWRITE_TERMS = {
     "angry",
     "anger",
@@ -58,6 +111,17 @@ async def load_feedback_records(pg) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
+    tokens = [
+        w
+        for w in re.sub(r"[^\w\s]", " ", text.lower()).split()
+        if len(w) > 4 and w not in PLANNER_STOPWORDS
+    ]
+    priority = [w for w in tokens if w in PLANNER_PRIORITY_TERMS]
+    remaining = [w for w in tokens if w not in PLANNER_PRIORITY_TERMS]
+    return list(dict.fromkeys([*priority, *remaining]))[:limit]
+
+
 async def run_strategic_planner(
     dilemma: str,
     user_email: str,
@@ -81,30 +145,8 @@ async def run_strategic_planner(
         elif followed > 0:
             tone_msg = "Steadfast Devotion Mode Activated"
 
-    stopwords = {
-        "about",
-        "there",
-        "their",
-        "would",
-        "could",
-        "should",
-        "under",
-        "which",
-        "other",
-        "these",
-        "those",
-        "email",
-        "phone",
-        "redacted",
-        "email_redacted",
-        "phone_redacted",
-    }
     planning_text = optimized_query or dilemma
-    keywords = [
-        w
-        for w in re.sub(r"[^\w\s]", " ", planning_text.lower()).split()
-        if len(w) > 4 and w not in stopwords
-    ][:3]
+    keywords = _extract_planner_keywords(planning_text)
     if not keywords:
         keywords = ["dharma", "duty", "virtue"]
 

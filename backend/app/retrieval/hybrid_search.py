@@ -50,9 +50,9 @@ class ScriptureVerse:
 CONCEPT_CLOUDS: dict[str, list[str]] = {
     "anxiety": ["worry", "tomorrow", "anxious", "restless", "fear", "results", "stress", "burden", "pressure", "outcome"],
     "anger": ["fury", "hatred", "vengeance", "revenge", "conflict", "retaliation", "dispute", "violent", "argument"],
-    "greed": ["money", "wealth", "covet", "belonging", "gain", "ambition", "profit", "stealing", "cheat"],
-    "duty": ["karma", "work", "prescribed", "action", "obligation", "responsibility", "effort", "career", "job"],
-    "betrayal": ["partners", "backstab", "enemy", "lying", "cheat", "scam", "business", "friend", "divorce"],
+    "greed": ["money", "wealth", "financial", "financially", "company", "covet", "belonging", "gain", "ambition", "profit", "stealing", "cheat"],
+    "duty": ["karma", "work", "prescribed", "action", "obligation", "responsibility", "effort", "career", "job", "survive", "company"],
+    "betrayal": ["partner", "partners", "backstab", "enemy", "lying", "cheat", "scam", "business", "friend", "divorce"],
     "environment": ["earth", "world", "nature", "sustainable", "sharing", "sharing wealth", "greed", "renunciation"],
     "love": ["goodwill", "friend", "protect", "empathy", "care", "heart", "mother", "compassion"],
     "peace": ["calm", "mind", "intellect", "present", "trust", "silence", "purity"],
@@ -137,12 +137,23 @@ def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: in
     reranked = []
     for item in candidates:
         verse = item["verse"]
-        text = f"{verse.get('translation', '')} {verse.get('context', '')}".lower()
+        text = (
+            f"{verse.get('translation', '')} {verse.get('context', '')} "
+            f"{' '.join(str(keyword) for keyword in verse.get('keywords', []))}"
+        ).lower()
         overlap = sum(1 for t in query_terms if len(t) > 3 and t in text)
         bonus = overlap * 3
-        reranked.append({**item, "score": min(item["score"] + bonus, 100), "rerankBoost": bonus})
-    reranked.sort(key=lambda x: x["score"], reverse=True)
-    return reranked[:top_k]
+        sort_score = item["score"] + bonus
+        reranked.append(
+            {
+                **item,
+                "score": min(sort_score, 100),
+                "rerankBoost": bonus,
+                "_sortScore": sort_score,
+            }
+        )
+    reranked.sort(key=lambda x: x["_sortScore"], reverse=True)
+    return [{k: v for k, v in item.items() if k != "_sortScore"} for item in reranked[:top_k]]
 
 
 @lru_cache
