@@ -3,10 +3,14 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import require_auth
+from app.agents.pipeline_messages import build_quality_failure_user_message
 from app.eco.aggregator import get_daily_rollup
 from app.hitl.checkpoints import resume_checkpoint
+from app.llm.generator import generate_moral_pathway
 from app.memory.postgres import PostgresPool
 from app.memory.streams import get_transaction_streams
+from app.observability.audit_logger import persist_audit_log
+from app.observability.g_eval_judge import run_g_eval_judge
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
 from pydantic import BaseModel
@@ -60,6 +64,67 @@ async def health_deep(request: Request):
 class HitlBody(BaseModel):
     workflowRunId: str
     decision: str
+    concepts: list[str] | None = None
+    selectedVerseIds: list[str] | None = None
+    manualVerse: dict[str, str] | None = None
+
+
+def _manual_verse_to_citation(manual_verse: dict[str, str] | None) -> dict | None:
+    if not manual_verse:
+        return None
+    translation = str(manual_verse.get("translation") or "").strip()
+    if not translation:
+        return None
+    source = str(manual_verse.get("source") or "Manual scripture").strip()[:120]
+    faith = str(manual_verse.get("faith") or "User provided").strip()[:80]
+    chapter = str(manual_verse.get("chapter") or "").strip()[:80]
+    verse = str(manual_verse.get("verse") or "").strip()[:80]
+    context = str(manual_verse.get("context") or "User-provided verse for pre-synthesis grounding.").strip()[:240]
+    keywords = [
+        keyword.strip().lower()
+        for keyword in str(manual_verse.get("keywords") or "").split(",")
+        if keyword.strip()
+    ][:8]
+    return {
+        "id": f"manual-{abs(hash((source, chapter, verse, translation))) % 10_000_000}",
+        "faith": faith,
+        "source": source,
+        "chapter": chapter,
+        "verse": verse,
+        "translation": translation[:800],
+        "context": context,
+        "keywords": keywords or ["manual", "guidance"],
+        "originalText": str(manual_verse.get("originalText") or "").strip()[:800] or None,
+    }
+
+
+def _approved_pre_synthesis_citations(payload: dict, body: HitlBody) -> list[dict]:
+    hitl = payload.get("hitl") or {}
+    candidate_items = hitl.get("candidateScriptures") or []
+    selected_ids = set(body.selectedVerseIds or hitl.get("selectedVerseIds") or [])
+    citations: list[dict] = []
+    for item in candidate_items:
+        verse = item.get("verse") if isinstance(item, dict) else None
+        if not isinstance(verse, dict):
+            continue
+        verse_id = str(verse.get("id") or "")
+        if selected_ids and verse_id not in selected_ids:
+            continue
+        citations.append(verse)
+
+    manual_citation = _manual_verse_to_citation(body.manualVerse)
+    if manual_citation:
+        citations.append(manual_citation)
+
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for citation in citations:
+        citation_id = str(citation.get("id") or citation.get("translation") or "")
+        if citation_id in seen:
+            continue
+        seen.add(citation_id)
+        deduped.append(citation)
+    return deduped[:4]
 
 
 @router.post("/hitl/resume")
@@ -68,6 +133,47 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
     payload = await resume_checkpoint(pg, body.workflowRunId, body.decision)
     if not payload:
         raise HTTPException(status_code=404, detail="Checkpoint not found.")
+    if body.decision != "approve":
+        return {"success": True, "result": payload}
+
+    hitl = payload.get("hitl") or {}
+    if hitl.get("stage") == "pre_synthesis_verification":
+        citations = _approved_pre_synthesis_citations(payload, body)
+        if not citations:
+            raise HTTPException(status_code=400, detail="Select at least one scripture or add a manual verse.")
+
+        concepts = [
+            str(concept).strip().lower()
+            for concept in (body.concepts or hitl.get("proposedKeywords") or payload.get("keywords") or [])
+            if str(concept).strip()
+        ][:8]
+        dilemma = payload.get("rewrittenQuery") or payload.get("originalQuery") or ""
+        pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
+        audit = run_g_eval_judge(dilemma, citations, pathway)
+        await persist_audit_log(pg, payload.get("requestId") or body.workflowRunId, audit)
+
+        result = {
+            **payload,
+            "status": "completed" if audit.get("passed") else "quality_threshold_not_met",
+            "userMessage": None if audit.get("passed") else build_quality_failure_user_message(audit, audit.get("minScore", 3)),
+            "hitlDecision": body.decision,
+            "humanApprovedConcepts": concepts,
+            "keywords": concepts or payload.get("keywords", []),
+            "citations": citations,
+            "moralPathway": pathway if audit.get("passed") else None,
+            "hitl": {
+                **hitl,
+                "approvedConcepts": concepts,
+                "approvedVerseIds": [str(citation.get("id")) for citation in citations if citation.get("id")],
+            },
+            "quantizedMetrics": metrics,
+            "synthesisEngine": metrics.get("engine"),
+            "auditScores": audit,
+            "confidence": max([item.get("score", 0) for item in payload.get("rerankedCitations", [])] or [payload.get("confidence", 0)]),
+            "cacheHit": False,
+        }
+        return {"success": True, "result": result}
+
     if body.decision == "approve":
         payload["status"] = "completed"
         payload["moralPathway"] = payload.get("hitl", {}).get("draftPathway") or payload.get("moralPathway")

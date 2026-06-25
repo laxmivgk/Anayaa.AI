@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     hitl_enabled: bool = True
     rate_limit_per_minute: int = 20
+    session_refresh_rate_limit_per_minute: int = 10
     scriptures_json_path: str = "data/scriptures.json"
     google_studio_scriptures_path: str = "../google_studio/src/data/scriptures.ts"
     llmlingua_enabled: bool = True

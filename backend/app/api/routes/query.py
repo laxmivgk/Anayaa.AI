@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api", tags=["query"])
 
 class QueryBody(BaseModel):
     query: str = Field(min_length=1)
-    previousContext: dict[str, str] | None = None
+    preSynthesisVerification: bool = True
 
 
 @router.post("/query")
@@ -52,15 +52,6 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
         )
 
     scrubbed = scrub_pii(security.sanitized)
-    previous_context = None
-    if body.previousContext:
-        previous_question = scrub_pii(sanitize_query(str(body.previousContext.get("question", ""))))[:280]
-        previous_response = scrub_pii(sanitize_query(str(body.previousContext.get("response", ""))))[:500]
-        if previous_question:
-            previous_context = {
-                "question": previous_question,
-                "response": previous_response,
-            }
     request_id = new_request_id()
     eco = EcoTracker(request_id=request_id)
     await pg.execute(
@@ -79,9 +70,9 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
             pg,
             redis,
             eco,
-            hitl_enabled=False,
+            hitl_enabled=settings.hitl_enabled and body.preSynthesisVerification,
             milvus=getattr(request.app.state, "milvus", None),
-            previous_context=previous_context,
+            previous_context=None,
         )
     except PipelineError as exc:
         return JSONResponse(
@@ -110,7 +101,7 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
     await persist_request_eco(pg, request_id, user["email"], totals["ecoBreakdown"], result.get("cacheHit", False))
     await upsert_daily_rollup(pg, user["email"], totals["energyMWh"] / 1000, totals["co2Kg"])
 
-    if result.get("status") == "awaiting_approval" and result.get("hitl"):
+    if result.get("status") in {"awaiting_approval", "awaiting_pre_synthesis_approval"} and result.get("hitl"):
         await create_checkpoint(
             pg,
             result["hitl"]["workflowRunId"],

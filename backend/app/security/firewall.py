@@ -9,6 +9,10 @@ DANGER_PATTERNS = [
     re.compile(r"INSERT\s+INTO", re.I),
     re.compile(r"--"),
     re.compile(r"/\*"),
+    re.compile(r"\bignore\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts|messages)\b", re.I),
+    re.compile(r"\bdisregard\s+(?:all\s+)?(?:previous|prior|above)\s+(?:instructions|rules|prompts|messages)\b", re.I),
+    re.compile(r"\b(?:reveal|show|print|dump|exfiltrate)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions)\b", re.I),
+    re.compile(r"\byou\s+are\s+now\s+(?:in\s+)?(?:developer|admin|root|god)\s+mode\b", re.I),
 ]
 
 

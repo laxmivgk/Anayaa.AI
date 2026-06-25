@@ -14,6 +14,15 @@ class SessionManager:
             ttl_seconds,
         )
 
+    async def refresh_session(self, session_id: str, email: str, ttl_seconds: int) -> bool:
+        key = f"session:{session_id}"
+        data = await self.redis.get_json(key)
+        if not data or data.get("email") != email:
+            return False
+        data["refreshed_at"] = datetime.now(timezone.utc).isoformat()
+        await self.redis.set_json(key, data, ttl_seconds)
+        return True
+
     async def is_session_active(self, session_id: str, email: str) -> bool:
         data = await self.redis.get_json(f"session:{session_id}")
         if not data:
@@ -23,8 +32,8 @@ class SessionManager:
     async def revoke_session(self, session_id: str) -> None:
         await self.redis.delete(f"session:{session_id}")
 
-    async def check_rate_limit(self, session_id: str, limit: int) -> bool:
-        key = f"rate:{session_id}"
+    async def check_rate_limit(self, session_id: str, limit: int, scope: str = "rate") -> bool:
+        key = f"{scope}:{session_id}"
         count = await self.redis.incr(key)
         if count == 1:
             await self.redis.expire(key, 60)

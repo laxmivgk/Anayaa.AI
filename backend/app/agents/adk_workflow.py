@@ -62,6 +62,9 @@ QUERY_STOPWORDS = {
     "want",
     "feel",
     "help",
+    "handle",
+    "without",
+    "ensuring",
 }
 
 MORAL_QUERY_TERMS = {
@@ -72,10 +75,13 @@ MORAL_QUERY_TERMS = {
     "argue",
     "betray",
     "betrayed",
+    "betrayal",
     "blame",
+    "business",
     "care",
     "cheat",
     "cheated",
+    "company",
     "compassion",
     "confess",
     "conflict",
@@ -100,15 +106,24 @@ MORAL_QUERY_TERMS = {
     "moral",
     "peace",
     "relationship",
+    "revenge",
     "responsibility",
     "right",
     "selfish",
+    "survive",
     "truth",
     "trust",
     "wrong",
 }
 
 SCRIPTURE_BRIDGES = {
+    "betray": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
+    "betrayed": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
+    "betrayal": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
+    "business": {"business", "fairness", "justice", "integrity", "wealth", "duty", "work"},
+    "company": {"business", "wealth", "work", "duty", "responsibility", "hardship", "failure"},
+    "financial": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
+    "financially": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
     "friend": {"friend", "goodwill", "love", "compassion", "trust"},
     "lied": {"truth", "honesty", "falsehood", "speech"},
     "lie": {"truth", "honesty", "falsehood", "speech"},
@@ -120,6 +135,9 @@ SCRIPTURE_BRIDGES = {
     "anxious": {"anxiety", "worry", "peace", "trust"},
     "anxiety": {"anxiety", "worry", "peace", "trust"},
     "hurt": {"harm", "compassion", "care", "peace"},
+    "partner": {"relationship", "fairness", "trust", "integrity", "business", "friend"},
+    "revenge": {"revenge", "retaliation", "forgiveness", "patience", "peace", "goodness"},
+    "survive": {"hardship", "hope", "ease", "duty", "work", "strength", "responsibility"},
     "trust": {"truth", "faith", "trust", "integrity"},
 }
 
@@ -442,6 +460,11 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         eco.track_stage("Retriever", confidence=effective_top_score if reranked else 0)
 
     citations = [(item.get("verse") or {}) for item in reranked] if context_sufficient else []
+    pre_synthesis_approval_required = (
+        bool(ctx.state.get("hitl_enabled", settings.hitl_enabled))
+        and context_sufficient
+        and not bool(ctx.state.get("hitl_resume", False))
+    )
     return {
         **payload,
         "searchQuery": " | ".join(retrieval_queries),
@@ -457,6 +480,7 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "rawTopRetrievalScore": top_score,
         "retrievalThreshold": settings.retrieval_confidence_threshold,
         "retrievalBlocked": None if query_supported else "retrieval_not_relevant_to_query",
+        "preSynthesisApprovalRequired": pre_synthesis_approval_required,
     }
 
 
@@ -464,6 +488,8 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
 async def synthesize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     payload = node_input if isinstance(node_input, dict) else {}
     if not payload.get("contextSufficient", True):
+        return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
+    if payload.get("preSynthesisApprovalRequired"):
         return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
 
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
@@ -488,6 +514,10 @@ async def judge_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     payload = node_input if isinstance(node_input, dict) else {}
     if not payload.get("contextSufficient", True):
         return {**payload, "auditScores": None, "confidence": payload.get("topRetrievalScore", 0)}
+    if payload.get("preSynthesisApprovalRequired"):
+        reranked = payload.get("rerankedCitations") or []
+        confidence = reranked[0].get("score", 0) if reranked else payload.get("topRetrievalScore", 0)
+        return {**payload, "auditScores": None, "confidence": confidence}
 
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     citations = payload.get("citations") or []
@@ -559,6 +589,7 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     runtime = _runtime_context(ctx)
     eco: EcoTracker | None = runtime.get("eco")
     redis: RedisCache | None = runtime.get("redis")
+    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
 
     if eco:
         eco.track_stage("GEvalJudge")
@@ -623,6 +654,63 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["loopDetails"] = _react_loop_details(payload)
         return result
 
+    if payload.get("preSynthesisApprovalRequired"):
+        candidate_items = payload.get("rerankedCitations") or payload.get("candidates") or []
+        selected_verse_ids = [
+            str((item.get("verse") or {}).get("id"))
+            for item in payload.get("rerankedCitations", [])
+            if (item.get("verse") or {}).get("id")
+        ]
+        result = {
+            "pipeline": "Google ADK ReAct Workflow + MCP Milvus Retrieval",
+            "orchestrator": "google-adk",
+            "cacheHit": False,
+            "status": "awaiting_pre_synthesis_approval",
+            "userMessage": "Review the retrieval plan before Anayaa synthesizes the final guidance.",
+            "originalQuery": payload.get("originalQuery") or ctx.state.get("original_dilemma", dilemma),
+            "rewrittenQuery": payload.get("rewrittenQuery") or ctx.state.get("rewritten_dilemma", dilemma),
+            "queryRewriteApplied": payload.get("queryRewriteApplied", False),
+            "queryRewriteRules": payload.get("queryRewriteRules", []),
+            "previousContextUsed": payload.get("previousContextUsed", False),
+            "previousContextQuestion": payload.get("previousContextQuestion"),
+            "compressedQuery": payload.get("compressedQuery"),
+            "compressionMetrics": payload.get("compressionMetrics"),
+            "keywords": payload.get("keywords", []),
+            "plannerReasoning": payload.get("reasoning"),
+            "historySummary": payload.get("historySummary"),
+            "toneMsg": payload.get("toneMsg"),
+            "candidatesCount": payload.get("candidatesCount", 0),
+            "rerankedCitations": payload.get("rerankedCitations", []),
+            "citations": payload.get("citations", []),
+            "retrievalQueries": payload.get("retrievalQueries", []),
+            "multiQueryUsed": payload.get("multiQueryUsed", False),
+            "moralPathway": None,
+            "quantizedMetrics": None,
+            "synthesisEngine": None,
+            "confidence": payload.get("confidence", 0),
+            "powerMetrics": power,
+            "ecoBreakdown": totals.get("ecoBreakdown", []),
+            "auditScores": None,
+            "retrievalViaMcp": payload.get("retrievalViaMcp", False),
+            "hybridSource": payload.get("hybridSource"),
+            "executionPlan": _execution_plan(payload),
+            "loopDetails": _react_loop_details(payload),
+            "requestId": request_id,
+            "hitl": {
+                "workflowRunId": request_id,
+                "stage": "pre_synthesis_verification",
+                "approvalTitle": "Pre-Synthesis Verification",
+                "instructions": (
+                    "Adjust concepts, deselect irrelevant verses, or manually add a verse before "
+                    "the Synthesizer Agent compiles the final moral pathway."
+                ),
+                "proposedKeywords": payload.get("keywords", []),
+                "candidateScriptures": candidate_items,
+                "selectedVerseIds": selected_verse_ids,
+            },
+        }
+        return result
+
     audit = payload.get("auditScores") or {}
     if not audit.get("passed", False):
         result = build_quality_failure_response(
@@ -645,7 +733,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         return result
 
     hitl_enabled = bool(ctx.state.get("hitl_enabled", settings.hitl_enabled))
-    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     reranked = payload.get("rerankedCitations") or []
     citations = payload.get("citations") or []
 
@@ -761,7 +848,7 @@ async def run_adk_pipeline(
     }
     eco.track_stage("QueryOptimizer")
 
-    cached = await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
+    cached = None if hitl_enabled else await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
     if cached:
         eco.track_stage("CacheReturn", cache_hit=True, confidence=95)
         power = eco.audit_power_footprint(True, 95)

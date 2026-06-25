@@ -19,24 +19,25 @@ The frontend has three tabs:
 
 | Tab | Purpose |
 | --- | --- |
-| Active Pathway | Submit a moral dilemma and view the generated Summary, scripture evidence, and current request state |
+| Active Pathway | Enter a moral dilemma and choose interactive or direct scripture-grounded guidance |
 | Scripture Center | Browse the loaded scripture corpus |
 | Eco Audit | View daily energy, CO2, and request metrics |
 
 In **Active Pathway**:
 
 1. The user enters a dilemma.
-2. `Submit` is disabled until text is entered.
-3. After submission, `Submit` stays disabled until the user edits the textarea or clicks **Ask another question**.
-4. The frontend sends the latest previous conversation as optional context.
-5. The backend uses that context only for follow-up questions, such as "what should I do then?"
-6. The Summary card shows a plain-language answer with simple sections:
+2. `Clear`, `The Interactive Guidance`, and `The Guidance` are shown under the query box.
+3. `The Interactive Guidance` starts pre-synthesis verification. The app pauses after planning and retrieval so the user can review concepts, deselect scripture candidates, or manually inject a scripture from the local corpus before clicking **Compile guidance**.
+4. `The Guidance` runs the same moral-guidance pipeline directly without the interactive review pause.
+5. Loading text is action-specific: only the clicked top-level guidance button shows `Processing...`, and only **Compile guidance** shows `Compiling...` during synthesis.
+6. Each query is treated as a single-turn request. The app does not send previous conversation context while multi-turn support is disabled.
+7. The Previous Conversation card can still show local UI history for reference only; it is not sent to the backend or used for retrieval.
+8. The Summary card shows a plain-language answer with the opening summary consolidated into one block, followed by simple sections:
    - One-line summary
    - Reflection
    - Judgment
    - Next step
    - Scripture grounding
-7. Only one previous conversation is displayed, and the current answer is filtered out of that history panel.
 
 ---
 
@@ -49,7 +50,7 @@ React + Vite frontend
     v
 FastAPI backend
     |
-    |-- JWT auth, Redis session/rate-limit checks
+    |-- JWT auth, Redis session/rate-limit checks, authenticated token refresh
     |-- sanitizer -> regex firewall -> PII scrubber
     |-- deterministic query rewriter
     |-- optional previous-conversation context for follow-ups
@@ -66,8 +67,8 @@ FastAPI backend
     |
     |-- Ollama synthesis (required local LLM runtime)
     |-- local G-Eval style judge
-    |-- PostgreSQL required persistence: audit, feedback, turns, eco metrics
-    |-- Redis required sessions, rate limits, and semantic cache
+    |-- PostgreSQL required persistence: audit, feedback, turns, HITL checkpoints, eco metrics
+    |-- Redis required sessions, query/refresh rate limits, and semantic cache
 ```
 
 Important retrieval detail: the backend workflow calls `retrieve_via_mcp()`, and that function now runs retrieval through the MCP server boundary. The FastAPI/ADK side does **not** open `MilvusStore` directly for request retrieval. The MCP client allowlists only:
@@ -89,9 +90,10 @@ This keeps database access behind the retrieval tool boundary and makes it easie
 | 2 | Planner | Extracts keywords and applies lightweight feedback-aware tone |
 | 3 | ReAct Reasoner | Builds the retrieval attempt and handles one bounded retry when needed |
 | 4 | MCP Retriever | Calls MCP tools for Milvus search, graph expansion, and reranking |
-| 5 | Synthesizer | Uses Ollama to generate the Summary from retrieved citations |
-| 6 | Judge | Scores faithfulness, citation grounding, query relevance, dharma alignment, harmlessness, and privacy |
-| 7 | Finalizer | Returns completed output or a guarded failure response |
+| 5 | Pre-Synthesis Verification | Optional HITL pause that presents proposed concepts and candidate scriptures before synthesis |
+| 6 | Synthesizer | Uses Ollama to generate the Summary from approved or directly retrieved citations |
+| 7 | Judge | Scores faithfulness, citation grounding, query relevance, dharma alignment, harmlessness, and privacy |
+| 8 | Finalizer | Returns completed output, an interactive approval checkpoint, or a guarded failure response |
 
 ### Query Rewriting
 
@@ -126,24 +128,6 @@ The response includes:
 - `queryRewriteApplied`
 - `queryRewriteRules`
 
-### Previous Conversation Context
-
-The frontend sends the most recent previous conversation as `previousContext`. The backend sanitizes it and uses it only when the new query looks like a follow-up.
-
-Example:
-
-```text
-Previous question: My friend lied to me. Should I forgive them?
-New question: what should I do then?
-```
-
-The backend rewrites the working query into a contextual follow-up. Standalone new questions ignore previous context.
-
-The response includes:
-
-- `previousContextUsed`
-- `previousContextQuestion`
-
 ### Multi-Query And ReAct
 
 The app uses both without making every request expensive:
@@ -153,6 +137,25 @@ The app uses both without making every request expensive:
 - Multi-query retrieval is used only on the first pass.
 - ReAct is limited to one retry (`REACT_MAX_TURNS=2`) and only runs after weak retrieval or audit failure.
 - Query-relevance failures retry close to the original query instead of broadening into generic moral terms.
+
+### Pre-Synthesis Verification
+
+When the frontend sends `preSynthesisVerification: true`, the workflow can stop before synthesis and return `status: awaiting_pre_synthesis_approval`. The response includes a `hitl` payload with:
+
+- `workflowRunId`
+- `approvalTitle`
+- `instructions`
+- `proposedKeywords`
+- `candidateScriptures`
+- `selectedVerseIds`
+
+The user can adjust concepts, select or deselect candidate scriptures, and manually inject a scripture selected from the local scripture database. The frontend then resumes the checkpoint through `POST /api/hitl/resume`.
+
+When `preSynthesisVerification: false`, the same retrieval and synthesis workflow runs directly and returns the resolved guidance without pausing.
+
+### Retrieval Quality Notes
+
+The planner and reranker preserve concrete dilemma terms such as `business`, `betrayal`, `partner`, `revenge`, `company`, and `financial` so practical business-survival questions do not collapse into generic moral advice. The synthesis prompt also asks for richer scripture grounding and practical next steps when the dilemma involves business or money.
 
 ### Hallucination Guarding
 
@@ -344,8 +347,9 @@ Use `ANAYAA_MILVUS_URI`, not `MILVUS_URI`. `MILVUS_URI` conflicts with pymilvus 
 | `REACT_MAX_TURNS` | `2` | Initial pass plus one retry |
 | `RETRIEVAL_CONFIDENCE_THRESHOLD` | `40.0` | Minimum retrieval score for synthesis |
 | `AUDIT_MIN_SCORE` | `3` | Minimum judge score per dimension |
-| `HITL_ENABLED` | `true` | HITL support exists, but `/api/query` currently requests direct completion |
+| `HITL_ENABLED` | `true` | Enables pre-synthesis verification when a request sets `preSynthesisVerification: true` |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Per-session request limit |
+| `SESSION_REFRESH_RATE_LIMIT_PER_MINUTE` | `10` | Per-session refresh limit for `/api/auth/refresh` |
 
 ### LLM And Retrieval Models
 
@@ -371,15 +375,20 @@ LLMLINGUA_ENABLED=false
 ADK_ENABLED=true
 REACT_LOOP_ENABLED=true
 REACT_MAX_TURNS=2
+HITL_ENABLED=true
+RATE_LIMIT_PER_MINUTE=20
+SESSION_REFRESH_RATE_LIMIT_PER_MINUTE=10
 ```
 
 
-.env.example:
+### Example `.env`
+
+```env
 JWT_SECRET=change-me-generate-with-start-backend
 
 # Required services
 POSTGRES_ENABLED=true
-REDIS_URL=
+REDIS_URL=redis://localhost:6379/0
 
 # Required retrieval service
 MILVUS_ENABLED=true
@@ -389,7 +398,7 @@ POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=anayaa
 POSTGRES_USER=anayaa
-POSTGRES_PASSWORD=<set-in-secret-manager>.
+POSTGRES_PASSWORD=anayaa_dev
 
 # Milvus — embedded Milvus Lite (no server) or standalone http://localhost:19530
 # Use ANAYAA_MILVUS_URI (not MILVUS_URI — that name conflicts with pymilvus global config)
@@ -406,7 +415,8 @@ OLLAMA_BASE_URL=http://localhost:11434
 GEMINI_API_KEY=
 
 HITL_ENABLED=true
-RATE_LIMIT_PER_MINUTE=10
+RATE_LIMIT_PER_MINUTE=20
+SESSION_REFRESH_RATE_LIMIT_PER_MINUTE=10
 
 # LLMLingua prompt compression (downloads model on first use)
 LLMLINGUA_ENABLED=false
@@ -422,6 +432,7 @@ RETRIEVAL_CONFIDENCE_THRESHOLD=40
 AUDIT_MIN_SCORE=3
 REACT_LOOP_ENABLED=true
 REACT_MAX_TURNS=2
+```
 
 ---
 
@@ -456,6 +467,20 @@ Authorization: Bearer <token>
 
 JWT sessions default to 15 minutes. The frontend shows a warning modal before expiry with **Continue** and **Cancel**.
 
+Active sessions use a sliding refresh flow:
+
+- `POST /api/auth/refresh` requires the current bearer token.
+- The backend verifies the token and Redis session before extending the same session.
+- Refresh keeps the same `session_id`, extends the Redis TTL, and returns a new JWT.
+- The frontend refreshes automatically when a guidance action starts near expiry.
+- The warning modal remains as a fallback, and **Continue** now calls `/api/auth/refresh`.
+- Refresh attempts have a separate Redis rate limit from query requests.
+
+```http
+POST /api/auth/refresh
+Authorization: Bearer <token>
+```
+
 ### Query
 
 ```http
@@ -465,27 +490,28 @@ Content-Type: application/json
 
 {
   "query": "My friend lied to me. Should I forgive them?",
-  "previousContext": {
-    "question": "Optional previous question",
-    "response": "Optional previous response"
-  }
+  "preSynthesisVerification": true
 }
 ```
 
-`previousContext` is optional. It is sanitized and only used for follow-up-style queries.
+Multi-turn context is disabled for now. `/api/query` treats each request as standalone and does not use previous conversation context.
+
+`preSynthesisVerification` is optional and defaults to `true`. Set it to:
+
+- `true` for **The Interactive Guidance** flow, where the app pauses for scripture/concept review before synthesis.
+- `false` for **The Guidance** flow, where the app computes the resolved pathway directly.
 
 ### Query Response Fields
 
 | Field | Description |
 | --- | --- |
-| `status` | `completed`, `insufficient_context`, `retrieval_unavailable`, `quality_threshold_not_met`, etc. |
+| `status` | `completed`, `awaiting_pre_synthesis_approval`, `insufficient_context`, `retrieval_unavailable`, `quality_threshold_not_met`, etc. |
 | `moralPathway` | Generated Summary when completed |
+| `hitl` | Interactive checkpoint data when `status` is `awaiting_pre_synthesis_approval` |
 | `originalQuery` | User-submitted query after security preprocessing |
 | `rewrittenQuery` | Query used by planner/retrieval/synthesis |
 | `queryRewriteApplied` | Whether deterministic rewriting changed the query |
 | `queryRewriteRules` | Rewrite rules that fired |
-| `previousContextUsed` | Whether previous conversation context influenced intent |
-| `previousContextQuestion` | Previous question used for follow-up context |
 | `retrievalQueries` | Actual retrieval queries used |
 | `multiQueryUsed` | Whether compound-query retrieval was used |
 | `citations` | Scripture verses used for synthesis |
@@ -497,11 +523,38 @@ Content-Type: application/json
 | `cacheHit` | Whether Redis semantic cache served the response |
 | `userMessage` | User-facing message for guarded failures |
 
+### HITL Resume
+
+```http
+POST /api/hitl/resume
+Authorization: Bearer <token>
+Content-Type: application/json
+
+{
+  "workflowRunId": "<workflow-run-id>",
+  "decision": "approve",
+  "concepts": ["forgiveness", "justice", "financial survival"],
+  "selectedVerseIds": ["verse-id-1", "verse-id-2"],
+  "manualVerse": {
+    "faith": "Hinduism",
+    "source": "Bhagavad Gita",
+    "chapter": "2",
+    "verse": "63",
+    "translation": "Short selected verse text",
+    "context": "Why this verse matters",
+    "keywords": "anger, delusion, judgment"
+  }
+}
+```
+
+Use `decision: approve` to compile final guidance from selected scriptures and any manual verse. Use `decision: reject` to cancel the checkpoint and return the draft pathway if one exists.
+
 ### Other Endpoints
 
 | Method | Endpoint | Auth | Purpose |
 | --- | --- | --- | --- |
 | `POST` | `/api/auth/login` | No | Issue JWT |
+| `POST` | `/api/auth/refresh` | Yes | Extend the active session and return a fresh JWT |
 | `POST` | `/api/query` | Yes | Run the guidance pipeline |
 | `POST` | `/api/hitl/resume` | Yes | Resume a HITL checkpoint |
 | `POST` | `/api/feedback` | Yes | Store feedback for a request |
@@ -581,17 +634,36 @@ Full cleanup in one non-interactive command:
 
 ### Verification Commands
 
+Run the full pre-merge suite from the repo root:
+
+```bash
+./scripts/pre-merge-checks.sh
+```
+
+The same checks run in GitHub Actions for pull requests and pushes to `main` or `master`:
+
+- backend compile check
+- backend unit tests
+- frontend production build
+
+Install backend test dependencies first if your local venv does not have `pytest`:
+
 ```bash
 cd backend
-.venv/bin/python -m compileall app
+.venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+Individual commands:
+
+```bash
+cd backend
+.venv/bin/python -m compileall app tests
+.venv/bin/python -m pytest tests
 ```
 
 ```bash
 cd frontend
 npm run build
-```
-
----
 ```
 
 ---
