@@ -11,8 +11,21 @@ import httpx
 from app.agents.pipeline_errors import ServiceUnavailableError
 from app.config import get_settings
 from app.llm.router import select_model
+from app.security.harm_normalizer import normalize_harmful_framing_text
 
 logger = logging.getLogger(__name__)
+
+DHARMA_FRAME_RE = re.compile(
+    r"^I am asking a dharma dilemma about this user-provided situation:\s*(?P<situation>.*?)"
+    r"\.\s*Without inventing missing facts, what is the wisest, kindest, most truthful, "
+    r"and least harmful way to understand or act\?\s*$",
+    re.I,
+)
+IDENTITY_FRAME_RE = re.compile(
+    r"^I am asking a dharma dilemma about (?P<situation>who I am beyond roles and labels):\s*"
+    r"how should I understand (?P<terms>.*?)\?\s*$",
+    re.I,
+)
 
 
 async def prewarm_synthesizer() -> None:
@@ -50,7 +63,9 @@ async def generate_moral_pathway(
 
     settings = get_settings()
     model = select_model("synthesizer")
-    prompt = _build_synthesis_prompt(dilemma, citations, tone_msg)
+    visible_dilemma = _visible_dilemma_text(dilemma)
+    safe_dilemma = normalize_harmful_framing_text(visible_dilemma)
+    prompt = _build_synthesis_prompt(safe_dilemma, citations, tone_msg)
     started = time.perf_counter()
 
     try:
@@ -68,6 +83,7 @@ async def generate_moral_pathway(
                                 "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
                                 "Use only the user's dilemma and the retrieved scripture text as evidence. "
                                 "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
+                                "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
                                 "Do not use markdown, bullet points, or numbered lists."
                             ),
                         },
@@ -86,9 +102,9 @@ async def generate_moral_pathway(
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             used_fallback = False
-            if not _is_summary_relevant(dilemma, citations, pathway):
+            if not _is_summary_relevant(safe_dilemma, citations, pathway):
                 logger.warning("LLM synthesis drifted from query; using grounded fallback summary")
-                pathway = _build_grounded_fallback_summary(dilemma, citations)
+                pathway = _build_grounded_fallback_summary(safe_dilemma, citations)
                 used_fallback = True
 
             metrics = {
@@ -114,6 +130,7 @@ def _build_synthesis_prompt(
     citations: list[dict[str, Any]],
     tone_msg: str,
 ) -> str:
+    dilemma = _visible_dilemma_text(dilemma)
     citation_lines = []
     for idx, citation in enumerate(citations[:3], start=1):
         citation_lines.append(
@@ -134,15 +151,28 @@ def _build_synthesis_prompt(
         "Use simple everyday words. Each title must be visible at the start of its own line:\n"
         "One-line summary: answer the dilemma directly in one compact sentence.\n"
         "Reflection: explain the feeling or conflict in simple words, without blaming the user.\n"
-        "Judgment: say what choice seems wisest and kindest.\n"
+        "Judgement: say what choice seems wisest and kindest.\n"
         "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name the source or tradition when useful.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
+        "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
         "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', "
         "'right intention', 'moral pathway', and 'may this guidance inspire you'."
     )
+
+
+def _visible_dilemma_text(dilemma: str) -> str:
+    """Return the user-facing dilemma, not Anayaa's internal retrieval frame."""
+    text = re.sub(r"\s+", " ", str(dilemma or "")).strip()
+    match = DHARMA_FRAME_RE.match(text)
+    if match:
+        return match.group("situation").strip(" .?!")
+    match = IDENTITY_FRAME_RE.match(text)
+    if match:
+        return f"{match.group('situation')}; {match.group('terms')}".strip(" .?!")
+    return text
 
 
 def _query_focus_terms(dilemma: str) -> list[str]:
@@ -202,16 +232,29 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
 
 
 def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any]]) -> str:
-    dilemma_text = _shorten_sentence(dilemma)
+    visible_dilemma = _visible_dilemma_text(dilemma)
+    dilemma_text = _shorten_sentence(visible_dilemma)
     citation_keywords = _citation_keywords(citations)
     grounding = ", ".join(citation_keywords[:3]) if citation_keywords else "careful and truthful action"
+
+    if _is_livelihood_choice_dilemma(visible_dilemma):
+        return "\n".join(
+            [
+                f"One-line summary: Make a thoughtful choice about {dilemma_text}, not a random one.",
+                "Reflection: This is a question about responsibility, real needs, and choosing without panic.",
+                "Judgement: Choose the option that responsibly supports your needs while staying honest, steady, and aligned with your abilities.",
+                "Next step: Write down your non-negotiable needs, then compare each job option against income, dignity, location, growth, and family responsibilities.",
+                f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
+            ]
+        )
+
     return "\n".join(
         [
             f"One-line summary: Focus on the real question you asked: {dilemma_text}.",
             "Reflection: The situation needs a careful response, not a rushed or imagined one.",
-            "Judgment: Choose the action that is honest, kind, and least harmful.",
-            "Next step: Write one clear record of what happened, then choose one practical protection step such as preserving documents, reviewing cash needs, or seeking neutral professional advice.",
-            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or retaliation.",
+            "Judgement: Choose the action that is honest, kind, and least harmful.",
+            "Next step: Write the concrete choice in front of you, then choose one practical action that protects responsibility, truth, and peace.",
+            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
         ]
     )
 
@@ -224,6 +267,13 @@ def _citation_keywords(citations: list[dict[str, Any]]) -> list[str]:
             if len(term) >= 4 and term not in terms:
                 terms.append(term)
     return terms
+
+
+def _is_livelihood_choice_dilemma(value: str) -> bool:
+    lower = value.lower()
+    livelihood_terms = {"job", "jobs", "work", "career", "livelihood"}
+    choice_terms = {"random", "randomly", "needs", "need", "fulfills", "select", "choose"}
+    return any(term in lower for term in livelihood_terms) and any(term in lower for term in choice_terms)
 
 
 def _shorten_sentence(value: str, max_words: int = 18) -> str:

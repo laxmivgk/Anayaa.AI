@@ -7,14 +7,26 @@ QUERY_STOPWORDS = {
     "about",
     "after",
     "again",
+    "asking",
     "because",
     "could",
+    "dharma",
+    "dilemma",
+    "facts",
+    "harmful",
+    "inventing",
+    "kindest",
+    "least",
+    "missing",
+    "provided",
+    "situation",
     "their",
     "there",
     "these",
     "those",
     "through",
     "under",
+    "understand",
     "what",
     "when",
     "where",
@@ -22,6 +34,7 @@ QUERY_STOPWORDS = {
     "while",
     "with",
     "would",
+    "wisest",
     "should",
     "need",
     "want",
@@ -77,15 +90,20 @@ def _query_relevance_score(query: str, pathway_lower: str) -> tuple[int, list[st
 
 
 def _harmlessness_score(pathway_lower: str) -> int:
-    harmful_terms = {
-        "revenge",
-        "retaliate",
-        "retaliation",
-        "spy",
-        "sabotage",
-        "blackmail",
-        "threaten",
-    }
+    harmful_patterns = [
+        r"\brevenge\b",
+        r"\bretaliate\b",
+        r"\bretaliating\b",
+        r"\bretaliation\b",
+        r"\bspy\b",
+        r"\bspying\b",
+        r"\bsabotage\b",
+        r"\bsabotaging\b",
+        r"\bblackmail\b",
+        r"\bblackmailing\b",
+        r"\bthreaten\b",
+        r"\bthreatening\b",
+    ]
     safety_cues = {
         "avoid",
         "do not",
@@ -105,7 +123,7 @@ def _harmlessness_score(pathway_lower: str) -> int:
 
     sentences = re.split(r"[.!?\n]+", pathway_lower)
     for sentence in sentences:
-        if not any(term in sentence for term in harmful_terms):
+        if not any(re.search(pattern, sentence) for pattern in harmful_patterns):
             continue
         if any(cue in sentence for cue in safety_cues):
             continue

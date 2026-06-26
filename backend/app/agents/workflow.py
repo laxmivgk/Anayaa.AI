@@ -24,17 +24,29 @@ PLANNER_STOPWORDS = {
     "about",
     "after",
     "again",
+    "asking",
     "because",
     "could",
+    "dharma",
+    "dilemma",
     "email",
     "email_redacted",
     "ensuring",
+    "facts",
     "handle",
+    "harmful",
+    "inventing",
+    "kindest",
+    "least",
+    "looking",
+    "missing",
     "phone",
     "phone_redacted",
     "please",
+    "provided",
     "redacted",
     "should",
+    "situation",
     "sudden",
     "their",
     "there",
@@ -42,10 +54,12 @@ PLANNER_STOPWORDS = {
     "those",
     "through",
     "under",
+    "understand",
     "which",
     "while",
     "without",
     "would",
+    "wisest",
 }
 
 PLANNER_PRIORITY_TERMS = {
@@ -65,9 +79,21 @@ PLANNER_PRIORITY_TERMS = {
     "forgiveness",
     "honest",
     "integrity",
+    "identity",
+    "job",
+    "jobs",
+    "livelihood",
+    "need",
+    "needs",
     "partner",
+    "path",
+    "purpose",
+    "random",
+    "randomly",
     "relationship",
     "revenge",
+    "self",
+    "soul",
     "survive",
     "truth",
     "wealth",
@@ -86,9 +112,14 @@ MORAL_REWRITE_TERMS = {
     "guilt",
     "honest",
     "hurt",
+    "identity",
     "lied",
     "lying",
+    "path",
+    "purpose",
     "relationship",
+    "self",
+    "soul",
     "truth",
     "wrong",
 }
@@ -105,6 +136,24 @@ FOLLOW_UP_TERMS = {
     "this",
 }
 
+EXISTENTIAL_IDENTITY_PATTERNS = [
+    re.compile(r"^\s*who\s+am\s+i\s*\??\s*$", re.I),
+    re.compile(r"^\s*what\s+am\s+i\s*\??\s*$", re.I),
+    re.compile(r"^\s*what\s+is\s+my\s+(?:true\s+)?self\s*\??\s*$", re.I),
+    re.compile(r"^\s*what\s+is\s+my\s+(?:purpose|dharma|path)\s*\??\s*$", re.I),
+]
+
+EXISTENTIAL_IDENTITY_DHARMA_QUERY = (
+    "I am asking a dharma dilemma about who I am beyond roles and labels: "
+    "how should I understand my identity, self, soul, duty, authentic path, purpose, and right action?"
+)
+
+DHARMA_DILEMMA_FRAME = (
+    "I am asking a dharma dilemma about this user-provided situation: {query}. "
+    "Without inventing missing facts, what is the wisest, kindest, most truthful, "
+    "and least harmful way to understand or act?"
+)
+
 
 async def load_feedback_records(pg) -> list[dict[str, Any]]:
     rows = await pg.fetch("SELECT request_id, user_email, query, status, created_at FROM feedback_records ORDER BY created_at DESC")
@@ -115,7 +164,7 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
     tokens = [
         w
         for w in re.sub(r"[^\w\s]", " ", text.lower()).split()
-        if len(w) > 4 and w not in PLANNER_STOPWORDS
+        if (len(w) > 4 or w in PLANNER_PRIORITY_TERMS) and w not in PLANNER_STOPWORDS
     ]
     priority = [w for w in tokens if w in PLANNER_PRIORITY_TERMS]
     remaining = [w for w in tokens if w not in PLANNER_PRIORITY_TERMS]
@@ -196,6 +245,21 @@ def _contextualize_follow_up(query: str, previous_context: dict[str, Any] | None
     }
 
 
+def _rewrite_existential_identity_query(query: str) -> str | None:
+    if any(pattern.match(query) for pattern in EXISTENTIAL_IDENTITY_PATTERNS):
+        return EXISTENTIAL_IDENTITY_DHARMA_QUERY
+    return None
+
+
+def _ensure_dharma_dilemma_frame(query: str) -> str:
+    normalized = re.sub(r"\s+", " ", query).strip()
+    if not normalized:
+        return normalized
+    if "dharma dilemma" in normalized.lower():
+        return normalized
+    return DHARMA_DILEMMA_FRAME.format(query=normalized)
+
+
 def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None = None) -> dict[str, Any]:
     original = query.strip()
     contextual = _contextualize_follow_up(original, previous_context)
@@ -204,6 +268,11 @@ def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None 
     rewritten = rewritten.strip(" \t\n\r\"'")
 
     applied_rules: list[str] = []
+    identity_rewrite = _rewrite_existential_identity_query(rewritten)
+    if identity_rewrite:
+        rewritten = identity_rewrite
+        applied_rules.append("existential_identity_as_dharma_dilemma")
+
     for pattern, replacement in REWRITE_REPLACEMENTS.items():
         next_value = re.sub(pattern, replacement, rewritten, flags=re.IGNORECASE)
         if next_value != rewritten:
@@ -221,6 +290,11 @@ def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None 
     if rewritten and looks_moral and not has_question_shape:
         rewritten = f"{rewritten}. What is the wisest and kindest thing to do?"
         applied_rules.append("added_moral_question_frame")
+
+    framed = _ensure_dharma_dilemma_frame(rewritten)
+    if framed != rewritten:
+        rewritten = framed
+        applied_rules.append("assumed_dharma_dilemma")
 
     return {
         "originalQuery": original,
@@ -269,7 +343,7 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
         "compressedQuery": compressed_query,
         "originalQuery": dilemma,
         "compressionMetrics": compression.to_dict(),
-        "cacheKey": hashlib.sha256(f"react_v10|{dilemma}|{'|'.join(keywords)}".encode()).hexdigest()[:16],
+        "cacheKey": hashlib.sha256(f"react_v17|{dilemma}|{'|'.join(keywords)}".encode()).hexdigest()[:16],
         "faithFilters": [],
     }
 

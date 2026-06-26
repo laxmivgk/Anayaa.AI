@@ -13,6 +13,7 @@ from app.observability.audit_logger import persist_audit_log
 from app.observability.g_eval_judge import run_g_eval_judge
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
+from app.security.harm_normalizer import normalize_harmful_concepts, normalize_harmful_framing_text
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -142,14 +143,19 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         if not citations:
             raise HTTPException(status_code=400, detail="Select at least one scripture or add a manual verse.")
 
+        concept_source = body.concepts if body.concepts is not None else (
+            hitl.get("proposedKeywords") or payload.get("keywords") or []
+        )
         concepts = [
             str(concept).strip().lower()
-            for concept in (body.concepts or hitl.get("proposedKeywords") or payload.get("keywords") or [])
+            for concept in concept_source
             if str(concept).strip()
         ][:8]
+        concepts = normalize_harmful_concepts(concepts)
         dilemma = payload.get("rewrittenQuery") or payload.get("originalQuery") or ""
         pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
-        audit = run_g_eval_judge(dilemma, citations, pathway)
+        audit_query = " ".join(concepts) if concepts else normalize_harmful_framing_text(dilemma)
+        audit = run_g_eval_judge(audit_query, citations, pathway)
         await persist_audit_log(pg, payload.get("requestId") or body.workflowRunId, audit)
 
         result = {

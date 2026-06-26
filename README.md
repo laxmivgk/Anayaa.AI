@@ -19,7 +19,7 @@ The frontend has three tabs:
 
 | Tab | Purpose |
 | --- | --- |
-| Active Pathway | Enter a moral dilemma and choose interactive or direct scripture-grounded guidance |
+| Active Pathway | Enter a life dilemma and choose interactive or direct scripture-grounded guidance |
 | Scripture Center | Browse the loaded scripture corpus |
 | Eco Audit | View daily energy, CO2, and request metrics |
 
@@ -35,7 +35,7 @@ In **Active Pathway**:
 8. The Summary card shows a plain-language answer with the opening summary consolidated into one block, followed by simple sections:
    - One-line summary
    - Reflection
-   - Judgment
+   - Judgement
    - Next step
    - Scripture grounding
 
@@ -136,7 +136,26 @@ The app uses both without making every request expensive:
 - Compound questions are split into up to three sub-queries.
 - Multi-query retrieval is used only on the first pass.
 - ReAct is limited to one retry (`REACT_MAX_TURNS=2`) and only runs after weak retrieval or audit failure.
-- Query-relevance failures retry close to the original query instead of broadening into generic moral terms.
+- Query-relevance failures retry close to the original query instead of broadening into generic terms.
+
+### Pre-Synthesis Verification
+
+When the frontend sends `preSynthesisVerification: true`, the workflow can stop before synthesis and return `status: awaiting_pre_synthesis_approval`. The response includes a `hitl` payload with:
+
+- `workflowRunId`
+- `approvalTitle`
+- `instructions`
+- `proposedKeywords`
+- `candidateScriptures`
+- `selectedVerseIds`
+
+The user can adjust concepts, select or deselect candidate scriptures, and manually inject a scripture selected from the local scripture database. The frontend then resumes the checkpoint through `POST /api/hitl/resume`.
+
+When `preSynthesisVerification: false`, the same retrieval and synthesis workflow runs directly and returns the resolved guidance without pausing.
+
+### Retrieval Quality Notes
+
+The planner and reranker preserve concrete dilemma terms such as `business`, `betrayal`, `partner`, `revenge`, `company`, and `financial` so practical business-survival questions do not collapse into generic moral advice. The synthesis prompt also asks for richer scripture grounding and practical next steps when the dilemma involves business or money.
 
 ### Pre-Synthesis Verification
 
@@ -161,13 +180,14 @@ The planner and reranker preserve concrete dilemma terms such as `business`, `be
 
 Anayaa does not rely only on prompt wording. It also has deterministic gates:
 
-- Non-moral/out-of-scope queries are blocked before retrieval.
+- Security threats such as prompt injection and dangerous signatures are blocked before retrieval.
+- Broad life dilemmas are allowed to reach retrieval without requiring a hardcoded moral keyword.
 - Retrieved citations must overlap with the query before synthesis runs.
 - Generated summaries are checked for query relevance.
 - The judge includes `query_relevance` and `citation_grounding`.
 - Stale semantic-cache versions are bumped when behavior changes.
 
-If a query is outside scope or retrieval is unrelated, the API returns a guarded failure instead of a Summary.
+If retrieval is weak or unrelated, the API returns a guarded failure instead of a Summary.
 
 ---
 
@@ -646,11 +666,11 @@ The same checks run in GitHub Actions for pull requests and pushes to `main` or 
 - backend unit tests
 - frontend production build
 
-Install backend test dependencies first if your local venv does not have `pytest`:
+Install backend dependencies first if your local venv does not have `pytest`:
 
 ```bash
 cd backend
-.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/python -m pip install -r requirements.txt
 ```
 
 Individual commands:
@@ -676,5 +696,5 @@ npm run build
 - `backend/app/mcp/client.py` is the app-side MCP client.
 - `backend/app/mcp/milvus_retrieval_server.py` is the DB-owning MCP server.
 - The current hot path should report `retrievalViaMcp: true` for real retrieval attempts.
-- Out-of-scope prompts should return guarded failures, not summaries.
+- Security-blocked prompts and unrelated retrieval should return guarded failures, not summaries.
 - After backend changes, restart FastAPI; the dev server will not always reload long-lived ADK/MCP state cleanly.
