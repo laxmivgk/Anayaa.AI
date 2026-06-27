@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import json
 import logging
 import re
@@ -14,6 +15,15 @@ from app.memory.redis_cache import RedisCache
 
 logger = logging.getLogger(__name__)
 
+=======
+import hashlib
+import re
+from typing import Any
+
+from app.llm.prompt_compressor import compress_query_prompt
+from app.memory.redis_cache import RedisCache
+
+>>>>>>> origin/main
 REWRITE_REPLACEMENTS = {
     r"\bfrnd\b": "friend",
     r"\bfreind\b": "friend",
@@ -27,14 +37,18 @@ REWRITE_REPLACEMENTS = {
     r"\bmsg\b": "message",
     r"\btmrw\b": "tomorrow",
     r"\bbcoz\b": "because",
+<<<<<<< HEAD
     r"\bdrops+h+ipping\b": "dropshipping",
     r"\bscaming\b": "scamming",
+=======
+>>>>>>> origin/main
 }
 
 PLANNER_STOPWORDS = {
     "about",
     "after",
     "again",
+<<<<<<< HEAD
     "asking",
     "being",
     "because",
@@ -65,6 +79,19 @@ PLANNER_STOPWORDS = {
     "why",
     "will",
     "situation",
+=======
+    "because",
+    "could",
+    "email",
+    "email_redacted",
+    "ensuring",
+    "handle",
+    "phone",
+    "phone_redacted",
+    "please",
+    "redacted",
+    "should",
+>>>>>>> origin/main
     "sudden",
     "their",
     "there",
@@ -72,16 +99,25 @@ PLANNER_STOPWORDS = {
     "those",
     "through",
     "under",
+<<<<<<< HEAD
     "understand",
+=======
+>>>>>>> origin/main
     "which",
     "while",
     "without",
     "would",
+<<<<<<< HEAD
     "wisest",
 }
 
 PLANNER_PRIORITY_TERMS = {
     "affair",
+=======
+}
+
+PLANNER_PRIORITY_TERMS = {
+>>>>>>> origin/main
     "anger",
     "anxiety",
     "betray",
@@ -91,7 +127,10 @@ PLANNER_PRIORITY_TERMS = {
     "company",
     "compassion",
     "conflict",
+<<<<<<< HEAD
     "dropshipping",
+=======
+>>>>>>> origin/main
     "duty",
     "financial",
     "financially",
@@ -99,6 +138,7 @@ PLANNER_PRIORITY_TERMS = {
     "forgiveness",
     "honest",
     "integrity",
+<<<<<<< HEAD
     "identity",
     "job",
     "jobs",
@@ -117,6 +157,11 @@ PLANNER_PRIORITY_TERMS = {
     "soul",
     "spouse",
     "surprise",
+=======
+    "partner",
+    "relationship",
+    "revenge",
+>>>>>>> origin/main
     "survive",
     "truth",
     "wealth",
@@ -130,12 +175,16 @@ MORAL_REWRITE_TERMS = {
     "betray",
     "cheat",
     "conflict",
+<<<<<<< HEAD
     "dropshipping",
+=======
+>>>>>>> origin/main
     "forgive",
     "friend",
     "guilt",
     "honest",
     "hurt",
+<<<<<<< HEAD
     "identity",
     "lied",
     "lying",
@@ -144,6 +193,11 @@ MORAL_REWRITE_TERMS = {
     "relationship",
     "self",
     "soul",
+=======
+    "lied",
+    "lying",
+    "relationship",
+>>>>>>> origin/main
     "truth",
     "wrong",
 }
@@ -160,6 +214,7 @@ FOLLOW_UP_TERMS = {
     "this",
 }
 
+<<<<<<< HEAD
 EXISTENTIAL_IDENTITY_PATTERNS = [
     re.compile(r"^\s*who\s+am\s+i\s*\??\s*$", re.I),
     re.compile(r"^\s*what\s+am\s+i\s*\??\s*$", re.I),
@@ -194,6 +249,8 @@ PLANNER_SYSTEM_PROMPT = (
     "Return only valid compact JSON with exactly these keys: keywords, toneMsg."
 )
 
+=======
+>>>>>>> origin/main
 
 async def load_feedback_records(pg) -> list[dict[str, Any]]:
     rows = await pg.fetch("SELECT request_id, user_email, query, status, created_at FROM feedback_records ORDER BY created_at DESC")
@@ -204,13 +261,18 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
     tokens = [
         w
         for w in re.sub(r"[^\w\s]", " ", text.lower()).split()
+<<<<<<< HEAD
         if (len(w) > 4 or w in PLANNER_PRIORITY_TERMS) and w not in PLANNER_STOPWORDS
+=======
+        if len(w) > 4 and w not in PLANNER_STOPWORDS
+>>>>>>> origin/main
     ]
     priority = [w for w in tokens if w in PLANNER_PRIORITY_TERMS]
     remaining = [w for w in tokens if w not in PLANNER_PRIORITY_TERMS]
     return list(dict.fromkeys([*priority, *remaining]))[:limit]
 
 
+<<<<<<< HEAD
 def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
     followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
     strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
@@ -321,6 +383,8 @@ def _parse_llm_planner_response(
     }
 
 
+=======
+>>>>>>> origin/main
 async def run_strategic_planner(
     dilemma: str,
     user_email: str,
@@ -329,6 +393,7 @@ async def run_strategic_planner(
     optimized_query: str | None = None,
 ) -> dict[str, Any]:
     records = [r for r in await load_feedback_records(pg) if r.get("user_email") == user_email]
+<<<<<<< HEAD
     history_summary, tone_msg, feedback_stats = _planner_feedback_summary(records)
     settings = get_settings()
     model = select_model("planner")
@@ -364,6 +429,38 @@ async def run_strategic_planner(
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
     except ValueError as exc:
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
+=======
+    followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
+    strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
+
+    history_summary = f"No past feedback rows found for {user_email}. Initializing blank concierge path."
+    tone_msg = ""
+    if records:
+        history_summary = (
+            f"Found {len(records)} total interactive feedback entries for {user_email}: "
+            f"{followed} followed dharma matches, {strayed} strayed boundaries."
+        )
+        if strayed > 0:
+            tone_msg = "Compassionate Re-Alignment Mode Activated"
+        elif followed > 0:
+            tone_msg = "Steadfast Devotion Mode Activated"
+
+    planning_text = optimized_query or dilemma
+    keywords = _extract_planner_keywords(planning_text)
+    if not keywords:
+        keywords = ["dharma", "duty", "virtue"]
+
+    reasoning = (
+        "Strategic Planner aligns this moral issue with wisdom from multi-faith scripts "
+        "and virtues corresponding to the dilemma."
+    )
+    return {
+        "keywords": keywords,
+        "reasoning": reasoning,
+        "historySummary": history_summary,
+        "toneMsg": tone_msg,
+    }
+>>>>>>> origin/main
 
 
 def _short_context_text(value: Any, max_chars: int = 280) -> str:
@@ -400,6 +497,7 @@ def _contextualize_follow_up(query: str, previous_context: dict[str, Any] | None
     }
 
 
+<<<<<<< HEAD
 def _rewrite_existential_identity_query(query: str) -> str | None:
     if any(pattern.match(query) for pattern in EXISTENTIAL_IDENTITY_PATTERNS):
         return EXISTENTIAL_IDENTITY_DHARMA_QUERY
@@ -415,6 +513,8 @@ def _ensure_dharma_dilemma_frame(query: str) -> str:
     return DHARMA_DILEMMA_FRAME.format(query=normalized)
 
 
+=======
+>>>>>>> origin/main
 def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None = None) -> dict[str, Any]:
     original = query.strip()
     contextual = _contextualize_follow_up(original, previous_context)
@@ -423,11 +523,14 @@ def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None 
     rewritten = rewritten.strip(" \t\n\r\"'")
 
     applied_rules: list[str] = []
+<<<<<<< HEAD
     identity_rewrite = _rewrite_existential_identity_query(rewritten)
     if identity_rewrite:
         rewritten = identity_rewrite
         applied_rules.append("existential_identity_as_dharma_dilemma")
 
+=======
+>>>>>>> origin/main
     for pattern, replacement in REWRITE_REPLACEMENTS.items():
         next_value = re.sub(pattern, replacement, rewritten, flags=re.IGNORECASE)
         if next_value != rewritten:
@@ -446,11 +549,14 @@ def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None 
         rewritten = f"{rewritten}. What is the wisest and kindest thing to do?"
         applied_rules.append("added_moral_question_frame")
 
+<<<<<<< HEAD
     framed = _ensure_dharma_dilemma_frame(rewritten)
     if framed != rewritten:
         rewritten = framed
         applied_rules.append("assumed_dharma_dilemma")
 
+=======
+>>>>>>> origin/main
     return {
         "originalQuery": original,
         "rewrittenQuery": rewritten or original,
@@ -492,20 +598,28 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
     )
     compressed_query = compression.compressed_prompt or dilemma
     sub_queries = _build_sub_queries(dilemma, compressed_query)
+<<<<<<< HEAD
     cache_key, versions = build_semantic_cache_key(dilemma, keywords)
+=======
+>>>>>>> origin/main
     return {
         "subQueries": sub_queries,
         "multiQueryEnabled": len(sub_queries) > 1,
         "compressedQuery": compressed_query,
         "originalQuery": dilemma,
         "compressionMetrics": compression.to_dict(),
+<<<<<<< HEAD
         "cacheKey": cache_key,
         "cacheVersions": versions,
+=======
+        "cacheKey": hashlib.sha256(f"react_v10|{dilemma}|{'|'.join(keywords)}".encode()).hexdigest()[:16],
+>>>>>>> origin/main
         "faithFilters": [],
     }
 
 
 async def evaluate_semantic_cache(redis: RedisCache, cache_key: str) -> dict[str, Any] | None:
+<<<<<<< HEAD
     cached = await redis.get_json(f"semantic:{cache_key}")
     if not cached:
         return None
@@ -515,6 +629,9 @@ async def evaluate_semantic_cache(redis: RedisCache, cache_key: str) -> dict[str
         if policy.get(field) != expected:
             return None
     return cached
+=======
+    return await redis.get_json(f"semantic:{cache_key}")
+>>>>>>> origin/main
 
 
 async def store_semantic_cache(redis: RedisCache, cache_key: str, payload: dict[str, Any]) -> None:

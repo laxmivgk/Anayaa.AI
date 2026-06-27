@@ -23,6 +23,7 @@ class ServiceUnavailableError(PipelineError):
         self.service = service
 
 
+<<<<<<< HEAD
 class SynthesisRejectedError(PipelineError):
     def __init__(self, detail: str):
         super().__init__(
@@ -36,6 +37,8 @@ class SynthesisRejectedError(PipelineError):
         )
 
 
+=======
+>>>>>>> origin/main
 class RetrievalError(PipelineError):
     def __init__(self, detail: str):
         super().__init__(

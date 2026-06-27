@@ -28,6 +28,7 @@ def test_quality_failure_points_to_interactive_regeneration():
         min_score=3,
     )
 
+<<<<<<< HEAD
     assert "The Interactive Guidance" in message
     assert "try again later" not in message
 
@@ -54,3 +55,7 @@ def test_grounding_contract_failure_uses_user_facing_copy():
     assert "retrieved scripture passages" in message
     assert "grounding contract" not in message.lower()
     assert "Revise the final answer" not in message
+=======
+    assert "Use The Interactive Guidance" in message
+    assert "try again later" not in message
+>>>>>>> origin/main

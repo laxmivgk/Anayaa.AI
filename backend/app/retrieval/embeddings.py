@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import logging
+<<<<<<< HEAD
 import os
+=======
+>>>>>>> origin/main
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -25,6 +28,7 @@ def verse_doc_text(verse) -> str:
 @lru_cache
 def get_embedder() -> "ScriptureEmbedder":
     settings = get_settings()
+<<<<<<< HEAD
     return ScriptureEmbedder(settings.embedding_model, local_files_only=settings.offline_mode)
 
 
@@ -47,6 +51,17 @@ class ScriptureEmbedder:
                     "then Anayaa can run offline."
                 ) from exc
             raise
+=======
+    return ScriptureEmbedder(settings.embedding_model)
+
+
+class ScriptureEmbedder:
+    def __init__(self, model_name: str) -> None:
+        from sentence_transformers import SentenceTransformer
+
+        logger.info("Loading embedding model: %s", model_name)
+        self.model: SentenceTransformer = SentenceTransformer(model_name)
+>>>>>>> origin/main
         if hasattr(self.model, "get_embedding_dimension"):
             self.dimension = int(self.model.get_embedding_dimension())
         else:

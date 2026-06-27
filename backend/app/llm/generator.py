@@ -4,11 +4,15 @@ from __future__ import annotations
 import logging
 import re
 import time
+<<<<<<< HEAD
 from html import unescape
+=======
+>>>>>>> origin/main
 from typing import Any
 
 import httpx
 
+<<<<<<< HEAD
 from app.agents.pipeline_errors import ServiceUnavailableError, SynthesisRejectedError
 from app.config import get_settings
 from app.llm.router import select_model
@@ -131,6 +135,34 @@ async def prewarm_ollama_models() -> None:
 async def prewarm_synthesizer() -> None:
     """Backward-compatible wrapper for startup warmup."""
     await prewarm_ollama_models()
+=======
+from app.agents.pipeline_errors import ServiceUnavailableError
+from app.config import get_settings
+from app.llm.router import select_model
+
+logger = logging.getLogger(__name__)
+
+
+async def prewarm_synthesizer() -> None:
+    """Load the selected Ollama synthesizer model before the first user query."""
+    settings = get_settings()
+    model = select_model("synthesizer")
+    try:
+        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as client:
+            response = await client.post(
+                "/api/generate",
+                json={
+                    "model": model,
+                    "prompt": "ready",
+                    "stream": False,
+                    "keep_alive": "30m",
+                    "options": {"temperature": 0.0, "num_predict": 1, "num_ctx": 512},
+                },
+            )
+            response.raise_for_status()
+    except Exception as exc:
+        logger.warning("Ollama synthesizer warmup skipped: %s", exc)
+>>>>>>> origin/main
 
 
 async def generate_moral_pathway(
@@ -147,9 +179,13 @@ async def generate_moral_pathway(
 
     settings = get_settings()
     model = select_model("synthesizer")
+<<<<<<< HEAD
     visible_dilemma = _visible_dilemma_text(dilemma)
     safe_dilemma = normalize_harmful_framing_text(visible_dilemma)
     prompt = _build_synthesis_prompt(safe_dilemma, citations, tone_msg)
+=======
+    prompt = _build_synthesis_prompt(dilemma, citations, tone_msg)
+>>>>>>> origin/main
     started = time.perf_counter()
 
     try:
@@ -167,25 +203,36 @@ async def generate_moral_pathway(
                                 "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
                                 "Use only the user's dilemma and the retrieved scripture text as evidence. "
                                 "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
+<<<<<<< HEAD
                                 "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
+=======
+>>>>>>> origin/main
                                 "Do not use markdown, bullet points, or numbered lists."
                             ),
                         },
                         {"role": "user", "content": prompt},
                     ],
                     "stream": False,
+<<<<<<< HEAD
                     "think": False,
+=======
+>>>>>>> origin/main
                     "keep_alive": "30m",
                     "options": {"temperature": 0.0, "num_predict": 320, "num_ctx": 2048},
                 },
             )
             response.raise_for_status()
             data = response.json()
+<<<<<<< HEAD
             pathway = _clean_synthesis_output((data.get("message") or {}).get("content", ""))
+=======
+            pathway = (data.get("message") or {}).get("content", "").strip()
+>>>>>>> origin/main
             if not pathway:
                 raise ValueError("Empty LLM response")
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
+<<<<<<< HEAD
             rejection_reason = _synthesis_rejection_reason(safe_dilemma, citations, pathway)
             if rejection_reason:
                 logger.warning("LLM synthesis rejected (%s); no fallback answer will be shown", rejection_reason)
@@ -193,6 +240,16 @@ async def generate_moral_pathway(
 
             metrics = {
                 "engine": "Ollama LLM",
+=======
+            used_fallback = False
+            if not _is_summary_relevant(dilemma, citations, pathway):
+                logger.warning("LLM synthesis drifted from query; using grounded fallback summary")
+                pathway = _build_grounded_fallback_summary(dilemma, citations)
+                used_fallback = True
+
+            metrics = {
+                "engine": "Grounded fallback" if used_fallback else "Ollama LLM",
+>>>>>>> origin/main
                 "modelName": model,
                 "ttftMs": elapsed_ms,
                 "totalTokens": data.get("eval_count") or len(pathway) // 4,
@@ -214,6 +271,7 @@ def _build_synthesis_prompt(
     citations: list[dict[str, Any]],
     tone_msg: str,
 ) -> str:
+<<<<<<< HEAD
     dilemma = _visible_dilemma_text(dilemma)
     citation_lines = []
     anchor_lines = []
@@ -223,11 +281,16 @@ def _build_synthesis_prompt(
             for keyword in citation.get("keywords", [])[:4]
             if str(keyword).strip()
         ]
+=======
+    citation_lines = []
+    for idx, citation in enumerate(citations[:3], start=1):
+>>>>>>> origin/main
         citation_lines.append(
             f"{idx}. [{citation.get('faith')}] {citation.get('source')} "
             f"{citation.get('chapter')}:{citation.get('verse')} — "
             f"\"{citation.get('translation')}\""
         )
+<<<<<<< HEAD
         anchor_lines.append(
             f"{idx}. {citation.get('source')} {citation.get('chapter')}:{citation.get('verse')} "
             f"anchors: {', '.join(keywords) if keywords else citation.get('source')}"
@@ -246,22 +309,38 @@ def _build_synthesis_prompt(
             "Do not assume the user has invested money, suffered losses, or already started the business. "
             "Do not name specific commercial platforms, tools, or companies unless the user named them.\n"
         )
+=======
+    citations_block = "\n".join(citation_lines)
+    tone = tone_msg or "Balanced guidance mode"
+    focus_terms = _query_focus_terms(dilemma)
+    focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
+>>>>>>> origin/main
     return (
         f"Dilemma:\n{dilemma}\n\n"
         f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
         f"Retrieved scriptures:\n{citations_block}\n\n"
+<<<<<<< HEAD
         f"Citation anchors:\n{anchors_block}\n\n"
+=======
+>>>>>>> origin/main
         "Write exactly these 5 labeled sections, 180 words or fewer total.\n"
         "Use simple everyday words. Each title must be visible at the start of its own line:\n"
         "One-line summary: answer the dilemma directly in one compact sentence.\n"
         "Reflection: explain the feeling or conflict in simple words, without blaming the user.\n"
+<<<<<<< HEAD
         "Judgement: say what choice seems wisest and kindest.\n"
         "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
         f"{business_integrity_instruction}"
+=======
+        "Judgment: say what choice seems wisest and kindest.\n"
+        "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
+        "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name the source or tradition when useful.\n"
+        "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
+>>>>>>> origin/main
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
         "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', "
@@ -269,6 +348,7 @@ def _build_synthesis_prompt(
     )
 
 
+<<<<<<< HEAD
 def _clean_synthesis_output(pathway: str) -> str:
     """Remove prompt-instruction echoes before the pathway reaches the UI."""
     lines = [
@@ -369,10 +449,14 @@ def _visible_dilemma_text(dilemma: str) -> str:
 
 def _query_focus_terms(dilemma: str) -> list[str]:
     dilemma = _visible_dilemma_text(dilemma)
+=======
+def _query_focus_terms(dilemma: str) -> list[str]:
+>>>>>>> origin/main
     stopwords = {
         "about",
         "after",
         "again",
+<<<<<<< HEAD
         "asking",
         "because",
         "could",
@@ -396,6 +480,16 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "under",
         "understand",
         "user",
+=======
+        "because",
+        "could",
+        "their",
+        "there",
+        "these",
+        "those",
+        "through",
+        "under",
+>>>>>>> origin/main
         "what",
         "when",
         "where",
@@ -403,7 +497,10 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "while",
         "with",
         "would",
+<<<<<<< HEAD
         "wisest",
+=======
+>>>>>>> origin/main
         "should",
         "need",
         "want",
@@ -421,7 +518,11 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     pathway_lower = pathway.lower()
     focus_terms = _query_focus_terms(dilemma)
     if focus_terms:
+<<<<<<< HEAD
         matches = [term for term in focus_terms if _focus_term_in_text(term, pathway_lower)]
+=======
+        matches = [term for term in focus_terms if term in pathway_lower]
+>>>>>>> origin/main
         required_matches = 1 if len(focus_terms) <= 2 else 2
         if len(matches) < required_matches:
             return False
@@ -440,6 +541,7 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     return not citation_terms or any(term in pathway_lower for term in citation_terms[:8])
 
 
+<<<<<<< HEAD
 def _focus_term_in_text(term: str, text: str) -> bool:
     candidates = [term, *FOCUS_TERM_ALIASES.get(term, [])]
     return any(candidate and candidate in text for candidate in candidates)
@@ -495,3 +597,35 @@ def _is_business_integrity_dilemma(value: str) -> bool:
     business_terms = {"dropshipping", "business", "selling", "seller", "customer", "profit"}
     integrity_terms = {"scam", "scamming", "honest", "integrity", "mislead", "fraud", "trust"}
     return any(term in lower for term in business_terms) and any(term in lower for term in integrity_terms)
+=======
+def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any]]) -> str:
+    dilemma_text = _shorten_sentence(dilemma)
+    citation_keywords = _citation_keywords(citations)
+    grounding = ", ".join(citation_keywords[:3]) if citation_keywords else "careful and truthful action"
+    return "\n".join(
+        [
+            f"One-line summary: Focus on the real question you asked: {dilemma_text}.",
+            "Reflection: The situation needs a careful response, not a rushed or imagined one.",
+            "Judgment: Choose the action that is honest, kind, and least harmful.",
+            "Next step: Write one clear record of what happened, then choose one practical protection step such as preserving documents, reviewing cash needs, or seeking neutral professional advice.",
+            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or retaliation.",
+        ]
+    )
+
+
+def _citation_keywords(citations: list[dict[str, Any]]) -> list[str]:
+    terms: list[str] = []
+    for citation in citations:
+        for raw_term in citation.get("keywords") or []:
+            term = str(raw_term).strip().lower()
+            if len(term) >= 4 and term not in terms:
+                terms.append(term)
+    return terms
+
+
+def _shorten_sentence(value: str, max_words: int = 18) -> str:
+    words = re.sub(r"\s+", " ", value).strip(" .").split()
+    if len(words) <= max_words:
+        return " ".join(words)
+    return " ".join(words[:max_words]) + "..."
+>>>>>>> origin/main
