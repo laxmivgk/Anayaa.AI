@@ -50,6 +50,17 @@ CREATE TABLE IF NOT EXISTS sessions (
     revoked BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+CREATE TABLE IF NOT EXISTS users (
+    id SERIAL PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    disabled BOOLEAN NOT NULL DEFAULT FALSE,
+    password_reset_hash TEXT,
+    password_reset_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS turns (
     id SERIAL PRIMARY KEY,
     session_id TEXT REFERENCES sessions(session_id),
@@ -124,7 +135,9 @@ CREATE INDEX IF NOT EXISTS idx_scriptures_keywords ON scriptures USING GIN(keywo
 CREATE INDEX IF NOT EXISTS idx_eco_daily ON daily_eco_rollups(rollup_date, user_email);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_request_eco_metrics_created_at ON request_eco_metrics(created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_traces_created_at ON agent_traces(created_at);
 CREATE INDEX IF NOT EXISTS idx_hitl_checkpoints_terminal_retention
     ON hitl_checkpoints(status, resumed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_turns_created_at ON turns(created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_records_user_email ON feedback_records(user_email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
