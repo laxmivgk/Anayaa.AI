@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
@@ -24,15 +25,28 @@ def verse_doc_text(verse) -> str:
 @lru_cache
 def get_embedder() -> "ScriptureEmbedder":
     settings = get_settings()
-    return ScriptureEmbedder(settings.embedding_model)
+    return ScriptureEmbedder(settings.embedding_model, local_files_only=settings.offline_mode)
 
 
 class ScriptureEmbedder:
-    def __init__(self, model_name: str) -> None:
+    def __init__(self, model_name: str, *, local_files_only: bool = True) -> None:
+        if local_files_only:
+            os.environ.setdefault("HF_HUB_OFFLINE", "1")
+            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+            os.environ.setdefault("HF_DATASETS_OFFLINE", "1")
         from sentence_transformers import SentenceTransformer
 
         logger.info("Loading embedding model: %s", model_name)
-        self.model: SentenceTransformer = SentenceTransformer(model_name)
+        try:
+            self.model: SentenceTransformer = SentenceTransformer(model_name, local_files_only=local_files_only)
+        except OSError as exc:
+            if local_files_only:
+                raise RuntimeError(
+                    "Embedding model is not available in the local cache. "
+                    f"Connect to the internet once and run backend startup/seed so '{model_name}' can download, "
+                    "then Anayaa can run offline."
+                ) from exc
+            raise
         if hasattr(self.model, "get_embedding_dimension"):
             self.dimension = int(self.model.get_embedding_dimension())
         else:

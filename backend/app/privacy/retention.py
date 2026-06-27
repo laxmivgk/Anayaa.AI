@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 class RetentionResult:
     audit_logs: int
     request_eco_metrics: int
+    agent_traces: int
     hitl_checkpoints: int
     turns: int
 
@@ -23,6 +24,7 @@ class RetentionResult:
         return {
             "auditLogsDeleted": self.audit_logs,
             "requestEcoMetricsDeleted": self.request_eco_metrics,
+            "agentTracesDeleted": self.agent_traces,
             "hitlCheckpointsDeleted": self.hitl_checkpoints,
             "turnsDeleted": self.turns,
         }
@@ -40,6 +42,7 @@ async def ensure_retention_indexes(pg: PostgresPool) -> None:
     statements = [
         "CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)",
         "CREATE INDEX IF NOT EXISTS idx_request_eco_metrics_created_at ON request_eco_metrics(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_agent_traces_created_at ON agent_traces(created_at)",
         """
         CREATE INDEX IF NOT EXISTS idx_hitl_checkpoints_terminal_retention
         ON hitl_checkpoints(status, resumed_at, created_at)
@@ -71,6 +74,15 @@ async def enforce_postgres_retention(pg: PostgresPool, settings: Settings) -> Re
             settings.request_eco_metrics_retention_days,
         )
     )
+    agent_traces = _deleted_count(
+        await pg.execute(
+            """
+            DELETE FROM agent_traces
+            WHERE created_at < NOW() - ($1::int * INTERVAL '1 day')
+            """,
+            settings.agent_traces_retention_days,
+        )
+    )
     hitl_checkpoints = _deleted_count(
         await pg.execute(
             """
@@ -94,6 +106,7 @@ async def enforce_postgres_retention(pg: PostgresPool, settings: Settings) -> Re
     return RetentionResult(
         audit_logs=audit_logs,
         request_eco_metrics=request_eco_metrics,
+        agent_traces=agent_traces,
         hitl_checkpoints=hitl_checkpoints,
         turns=turns,
     )

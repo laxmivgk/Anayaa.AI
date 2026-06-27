@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import require_auth
+from app.agents.pipeline_errors import PipelineError
 from app.agents.pipeline_messages import build_quality_failure_user_message
 from app.eco.aggregator import get_daily_rollup
 from app.hitl.checkpoints import resume_checkpoint
@@ -11,6 +12,7 @@ from app.memory.postgres import PostgresPool
 from app.memory.streams import get_transaction_streams
 from app.observability.audit_logger import persist_audit_log
 from app.observability.g_eval_judge import run_g_eval_judge
+from app.observability.guidance_reasons import build_guidance_reasons
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
 from app.security.harm_normalizer import normalize_harmful_concepts, normalize_harmful_framing_text
@@ -25,7 +27,7 @@ async def system_status(request: Request):
     redis = request.app.state.redis
     health = await check_health(pg, redis, getattr(request.app.state, "milvus_status", None))
     return {
-        "quantizedModel": "llama3.2:3b-local",
+        "quantizedModel": "qwen3:4b-local",
         "speculativeDraftModel": "gemma2:2b-local",
         "acceleration": "Local Apple Silicon / NPU Node",
         "redisCacheSize": "active" if health.get("redis") else "unavailable",
@@ -128,6 +130,21 @@ def _approved_pre_synthesis_citations(payload: dict, body: HitlBody) -> list[dic
     return deduped[:4]
 
 
+def _hitl_compile_audit_query(dilemma: str, concepts: list[str]) -> str:
+    """Judge interactive compile against the user's dilemma plus selected focus terms."""
+    safe_dilemma = normalize_harmful_framing_text(dilemma)
+    safe_lower = safe_dilemma.lower()
+    focus_terms: list[str] = []
+    for concept in normalize_harmful_concepts(concepts):
+        term = str(concept or "").strip().lower()
+        if not term or term in safe_lower or term in focus_terms:
+            continue
+        focus_terms.append(term)
+    if not focus_terms:
+        return safe_dilemma
+    return f"{safe_dilemma} Selected concepts: {', '.join(focus_terms)}"
+
+
 @router.post("/hitl/resume")
 async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_auth)):
     pg: PostgresPool = request.app.state.pg
@@ -153,9 +170,38 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         ][:8]
         concepts = normalize_harmful_concepts(concepts)
         dilemma = payload.get("rewrittenQuery") or payload.get("originalQuery") or ""
-        pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
-        audit_query = " ".join(concepts) if concepts else normalize_harmful_framing_text(dilemma)
-        audit = run_g_eval_judge(audit_query, citations, pathway)
+        try:
+            pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
+        except PipelineError as exc:
+            return {
+                "success": True,
+                "result": {
+                    **payload,
+                    "status": "synthesizer_unavailable",
+                    "userMessage": exc.user_message,
+                    "failureReason": "synthesizer_service_unavailable",
+                    "synthesizerError": str(exc),
+                    "hitlDecision": body.decision,
+                    "humanApprovedConcepts": concepts,
+                    "keywords": concepts or payload.get("keywords", []),
+                    "citations": citations,
+                    "moralPathway": None,
+                    "guidanceReasons": [],
+                    "hitl": {
+                        **hitl,
+                        "approvedConcepts": concepts,
+                        "approvedVerseIds": [str(citation.get("id")) for citation in citations if citation.get("id")],
+                    },
+                    "quantizedMetrics": None,
+                    "synthesisEngine": None,
+                    "auditScores": None,
+                    "confidence": max([item.get("score", 0) for item in payload.get("rerankedCitations", [])] or [payload.get("confidence", 0)]),
+                    "cacheHit": False,
+                },
+            }
+        # Judge compiled HITL guidance against the user's dilemma, with selected concepts as extra focus.
+        audit_query = _hitl_compile_audit_query(dilemma, concepts)
+        audit = await run_g_eval_judge(audit_query, citations, pathway)
         await persist_audit_log(pg, payload.get("requestId") or body.workflowRunId, audit)
 
         result = {
@@ -167,6 +213,7 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
             "keywords": concepts or payload.get("keywords", []),
             "citations": citations,
             "moralPathway": pathway if audit.get("passed") else None,
+            "guidanceReasons": build_guidance_reasons(dilemma, citations, pathway, audit) if audit.get("passed") else [],
             "hitl": {
                 **hitl,
                 "approvedConcepts": concepts,
