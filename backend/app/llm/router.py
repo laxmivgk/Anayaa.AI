@@ -8,9 +8,9 @@ def select_model(task: str) -> str:
         return "gemini-flash"
     routing = {
         "classifier": "gemma2:2b",
-        "optimizer": "llama3.2:3b",
-        "planner": "gemma2:2b",
+        "optimizer": "qwen3:4b",
+        "planner": "qwen3:4b",
         "synthesizer": "llama3.2:3b",
-        "judge": "llama3.2:3b",
+        "judge": "qwen3:4b",
     }
-    return routing.get(task, "llama3.2:3b")
+    return routing.get(task, "qwen3:4b")

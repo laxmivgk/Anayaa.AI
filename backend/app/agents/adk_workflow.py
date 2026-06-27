@@ -1,21 +1,27 @@
 """Google ADK multi-step workflow orchestration for Anayaa.AI."""
 from __future__ import annotations
 
+import json
 import logging
 import re
+from contextlib import nullcontext
 from typing import Any
 
+import httpx
 from google.adk import Runner, Workflow
 from google.adk.events import Event
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
-from app.agents.pipeline_errors import PipelineError, RetrievalError
+from app.agents.cache_policy import cache_policy_metadata
+from app.agents.pipeline_errors import PipelineError, RetrievalError, ServiceUnavailableError
 from app.agents.pipeline_messages import (
     build_insufficient_context_response,
+    build_planner_unavailable_response,
     build_quality_failure_response,
     build_retrieval_unavailable_response,
+    build_synthesizer_unavailable_response,
 )
 from app.agents.workflow import (
     evaluate_semantic_cache,
@@ -27,16 +33,31 @@ from app.agents.workflow import (
 from app.config import get_settings
 from app.eco.tracker import EcoTracker
 from app.llm.generator import generate_moral_pathway
+from app.llm.router import select_model
 from app.mcp.client import retrieve_via_mcp
 from app.memory.redis_cache import RedisCache
 from app.observability.audit_logger import persist_audit_log
 from app.observability.g_eval_judge import run_g_eval_judge
+from app.observability.guidance_reasons import build_guidance_reasons
+from app.observability.latency import AgentLatencyTracker
+from app.observability.plan_trace import persist_request_plan_trace
 
 logger = logging.getLogger(__name__)
 
 _session_service = InMemorySessionService()
 _runner: Runner | None = None
 _runtime_contexts: dict[str, dict[str, Any]] = {}
+
+RETRY_PLANNER_SYSTEM_PROMPT = (
+    "You are Anayaa's retry planner for a bounded ReAct loop. "
+    "Use only the provided sanitized runtime data. Do not write final user guidance. "
+    "If another attempt can improve scripture retrieval or answer quality, return action='retry'; "
+    "otherwise return action='finalize'. "
+    "For retry, produce one concise retryQuery that preserves the user's original dilemma and adds only relevant focus terms. "
+    "Return 2 to 6 lowercase focusKeywords. "
+    "Do not include reasoning, rationale, explanation, or final advice. "
+    "Return only valid compact JSON with keys: action, retryQuery, focusKeywords."
+)
 
 QUERY_STOPWORDS = {
     "about",
@@ -115,6 +136,44 @@ def _runtime_context(ctx) -> dict[str, Any]:
     return _runtime_contexts.get(str(request_id), {})
 
 
+def _latency_tracker(ctx) -> AgentLatencyTracker | None:
+    tracker = _runtime_context(ctx).get("latency")
+    return tracker if isinstance(tracker, AgentLatencyTracker) else None
+
+
+def _track_agent(ctx, agent: str, *, category: str = "agent", metadata: dict[str, Any] | None = None):
+    tracker = _latency_tracker(ctx)
+    return tracker.track(agent, category=category, metadata=metadata) if tracker else nullcontext()
+
+
+def _mark_agent(
+    ctx,
+    agent: str,
+    *,
+    category: str = "agent",
+    status: str = "skipped",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    tracker = _latency_tracker(ctx)
+    if tracker:
+        tracker.mark(agent, category=category, status=status, metadata=metadata)
+
+
+def _attach_agent_latency(ctx, result: dict[str, Any]) -> dict[str, Any]:
+    _mark_agent(ctx, "Finalize", category="workflow", status="completed")
+    tracker = _latency_tracker(ctx)
+    if tracker:
+        result["agentLatencyMetrics"] = tracker.snapshot()
+    return result
+
+
+async def _finalize_with_trace(ctx, result: dict[str, Any]) -> dict[str, Any]:
+    result = _attach_agent_latency(ctx, result)
+    runtime = _runtime_context(ctx)
+    await persist_request_plan_trace(runtime.get("pg"), str(result.get("requestId") or ctx.state.get("request_id") or ""), result)
+    return result
+
+
 def _content_text(node_input: Any) -> str:
     if isinstance(node_input, types.Content):
         parts = []
@@ -131,6 +190,116 @@ def _top_retrieval_score(reranked: list[dict[str, Any]]) -> float:
     if not reranked:
         return 0.0
     return float(reranked[0].get("score", 0))
+
+
+def _extract_json_object(raw: str) -> dict[str, Any]:
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(text[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Retry planner response JSON must be an object")
+    return parsed
+
+
+def _build_retry_planner_messages(payload: dict[str, Any], dilemma: str, turn: int) -> list[dict[str, str]]:
+    audit = payload.get("auditScores") or {}
+    citations = [
+        {
+            "source": verse.get("source"),
+            "faith": verse.get("faith"),
+            "keywords": verse.get("keywords") or [],
+        }
+        for verse in (payload.get("citations") or [])[:3]
+        if isinstance(verse, dict)
+    ]
+    user_payload = {
+        "dilemma": dilemma,
+        "turn": turn,
+        "maxTurns": payload.get("reactLoopLimit"),
+        "currentKeywords": payload.get("keywords") or [],
+        "contextSufficient": bool(payload.get("contextSufficient", True)),
+        "retrievalBlocked": payload.get("retrievalBlocked"),
+        "failedDimensions": audit.get("failedDimensions") or [],
+        "revisionHints": audit.get("revision_hints") or [],
+        "matchedQueryTerms": audit.get("matchedQueryTerms") or [],
+        "groundedTerms": audit.get("groundedTerms") or [],
+        "retrievedCitationHints": citations,
+    }
+    return [
+        {"role": "system", "content": RETRY_PLANNER_SYSTEM_PROMPT},
+        {"role": "user", "content": json.dumps(user_payload, ensure_ascii=True)},
+    ]
+
+
+def _normalize_focus_keywords(value: Any) -> list[str]:
+    keywords: list[str] = []
+    if isinstance(value, list):
+        raw_items = value
+    else:
+        raw_items = [value]
+    for item in raw_items:
+        for term in re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", str(item).lower()):
+            if term not in QUERY_STOPWORDS and term not in keywords:
+                keywords.append(term)
+    return keywords[:6]
+
+
+def _parse_retry_plan_response(raw: str) -> dict[str, Any]:
+    parsed = _extract_json_object(raw)
+    action = str(parsed.get("action") or "retry").strip().lower()
+    if action not in {"retry", "finalize"}:
+        action = "retry"
+    retry_query = re.sub(r"\s+", " ", str(parsed.get("retryQuery") or "")).strip()
+    focus_keywords = _normalize_focus_keywords(parsed.get("focusKeywords"))
+    if action == "retry" and not retry_query:
+        raise ValueError("Retry planner response must include retryQuery for retry action")
+    if action == "retry" and not focus_keywords:
+        raise ValueError("Retry planner response must include focusKeywords for retry action")
+    reason = "Retry with focused retrieval." if action == "retry" else "Finalize current result."
+    return {
+        "action": action,
+        "retryQuery": retry_query,
+        "focusKeywords": focus_keywords,
+        "reason": reason,
+    }
+
+
+async def _plan_react_retry_with_llm(payload: dict[str, Any], dilemma: str, turn: int) -> dict[str, Any] | None:
+    if turn <= 1 or payload.get("retrievalError"):
+        return None
+    audit = payload.get("auditScores") or {}
+    should_plan = not payload.get("contextSufficient", True) or bool(audit and not audit.get("passed", False))
+    if not should_plan:
+        return None
+
+    settings = get_settings()
+    model = select_model("planner")
+    async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=45.0) as client:
+        response = await client.post(
+            "/api/chat",
+            json={
+                "model": model,
+                "messages": _build_retry_planner_messages(payload, dilemma, turn),
+                "format": "json",
+                "stream": False,
+                "think": False,
+                "keep_alive": "30m",
+                "options": {"temperature": 0.0, "num_predict": 120, "num_ctx": 2048},
+            },
+        )
+        response.raise_for_status()
+        raw = (response.json().get("message") or {}).get("content", "")
+        plan = _parse_retry_plan_response(raw)
+        return {**plan, "model": model}
 
 
 def _nested_exception(exc: BaseException, exc_type: type[BaseException]) -> BaseException | None:
@@ -243,12 +412,47 @@ def _execution_plan(payload: dict[str, Any], audit: dict[str, Any] | None = None
 
 def _is_safe_to_cache(result: dict[str, Any]) -> bool:
     audit = result.get("auditScores") or {}
+    grounding_contract = audit.get("groundingContract") or {}
     return (
         result.get("status") == "completed"
         and bool(audit.get("passed"))
-        and bool(result.get("citations"))
+        and not bool(audit.get("judgeFallback", False))
+        and str(audit.get("auditStatus") or "") == "ok"
+        and bool(grounding_contract.get("passed"))
+        and len(result.get("citations") or []) >= 2
         and result.get("moralPathway") is not None
     )
+
+
+def _cache_rejection_reason(result: dict[str, Any]) -> str:
+    audit = result.get("auditScores") or {}
+    grounding_contract = audit.get("groundingContract") or {}
+    if result.get("status") != "completed":
+        return f"status_{result.get('status') or 'unknown'}"
+    if not result.get("moralPathway"):
+        return "missing_moral_pathway"
+    if len(result.get("citations") or []) < 2:
+        return "fewer_than_two_citations"
+    if not audit.get("passed"):
+        return "judge_not_passed"
+    if audit.get("judgeFallback"):
+        return "judge_fallback_used"
+    if str(audit.get("auditStatus") or "") != "ok":
+        return "audit_status_not_ok"
+    if not grounding_contract.get("passed"):
+        return "grounding_contract_not_passed"
+    return "cacheable"
+
+
+def _attach_cache_policy(result: dict[str, Any], cache_key: str | None) -> dict[str, Any]:
+    key = cache_key or str(result.get("cachePolicy", {}).get("cacheKey") or "")
+    cacheable = _is_safe_to_cache(result)
+    result["cachePolicy"] = cache_policy_metadata(
+        cache_key=key,
+        cacheable=cacheable,
+        reason="cacheable" if cacheable else _cache_rejection_reason(result),
+    )
+    return result
 
 
 @node(name="planner")
@@ -259,7 +463,23 @@ async def planner_node(ctx, node_input) -> dict[str, Any]:
     optimized_query = payload.get("compressedQuery") or payload.get("optimizedQuery")
     pg = _runtime_context(ctx).get("pg")
     user_email = state.get("user_email", "anonymous")
-    planner = await run_strategic_planner(dilemma, user_email, pg, optimized_query=optimized_query)
+    try:
+        with _track_agent(ctx, "Planner", category="llm", metadata={"modelRole": "planner"}):
+            planner = await run_strategic_planner(dilemma, user_email, pg, optimized_query=optimized_query)
+    except ServiceUnavailableError as exc:
+        logger.warning("Planner unavailable for request %s: %s", ctx.state.get("request_id"), exc)
+        return {
+            **payload,
+            "dilemma": dilemma,
+            "keywords": [],
+            "reasoning": None,
+            "historySummary": None,
+            "toneMsg": None,
+            "plannerEngine": None,
+            "plannerModel": None,
+            "plannerError": str(exc),
+            "contextSufficient": False,
+        }
     eco: EcoTracker | None = _runtime_context(ctx).get("eco")
     if eco:
         eco.track_stage("Planner")
@@ -271,14 +491,17 @@ async def optimizer_node(ctx, node_input: Any) -> dict[str, Any]:
     payload = node_input if isinstance(node_input, dict) else {}
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     optimizer = ctx.state.get("optimizer_preview")
-    if not isinstance(optimizer, dict) or optimizer.get("originalQuery") != dilemma:
-        optimizer = optimize_query(
-            dilemma,
-            payload.get("keywords", []),
-            payload.get("historySummary", ""),
-        )
+    with _track_agent(ctx, "QueryOptimizer", category="deterministic"):
+        if not isinstance(optimizer, dict) or optimizer.get("originalQuery") != dilemma:
+            optimizer = optimize_query(
+                dilemma,
+                payload.get("keywords", []),
+                payload.get("historySummary", ""),
+            )
+        else:
+            optimizer = {**optimizer, "optimizerCache": "preview"}
         eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-        if eco:
+        if eco and optimizer.get("optimizerCache") != "preview":
             eco.track_stage("QueryOptimizer")
     return {
         **payload,
@@ -296,40 +519,67 @@ async def optimizer_node(ctx, node_input: Any) -> dict[str, Any]:
     }
 
 
-@node(name="react_reason")
-async def react_reason_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
-    """Reason about the next retrieval/synthesis attempt in a bounded ReAct loop."""
-    payload = node_input if isinstance(node_input, dict) else {}
+async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     turn = int(payload.get("reactTurn") or 0) + 1
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
+    if payload.get("plannerError"):
+        _mark_agent(ctx, "ReActReasoner", category="workflow", status="skipped", metadata={"reason": "planner_unavailable"})
+        return {
+            **payload,
+            "reactTurn": turn,
+            "reactLoopLimit": settings.react_max_turns,
+            "reactReasoning": "Planner unavailable; finalize with an explicit planner-unavailable response.",
+            "reactSearchQuery": dilemma,
+            "reactLoopLog": [
+                *payload.get("reactLoopLog", []),
+                f"Turn {turn} Reason: Planner unavailable; retrieval and synthesis skipped.",
+            ],
+        }
     keywords = payload.get("keywords", [])
     audit = payload.get("auditScores") or {}
-    hints = audit.get("revision_hints") or []
-    failed_dimensions = audit.get("failedDimensions") or []
+    context_sufficient = bool(payload.get("contextSufficient", True))
 
     reason = "Initial reasoning pass: retrieve scripture context and draft grounded guidance."
     if payload.get("retrievalError"):
         reason = "Retrieval service reported an error; prepare final graceful response."
-    elif not payload.get("contextSufficient", True):
+    elif not context_sufficient:
         reason = "Observation found weak scripture grounding; broaden retrieval with moral themes and planner keywords."
     elif audit and not audit.get("passed", False):
         reason = "Judge found quality gaps; revise using audit hints before the next attempt."
 
-    query_terms = [term for term in dilemma.split() if len(term) > 3]
-    if "query_relevance" in failed_dimensions:
-        expansion_terms = [*keywords, *query_terms]
-    elif not payload.get("contextSufficient", True):
-        expansion_terms = [*keywords, "duty", "compassion", "truth", "harmony"]
-    else:
-        expansion_terms = [*keywords, *failed_dimensions, *" ".join(hints).split()]
-    expansion = " ".join(dict.fromkeys(term.strip().lower() for term in expansion_terms if term and len(term) > 2))
-    base_query = dilemma
-    react_search_query = f"{base_query} {expansion}".strip() if turn > 1 else base_query
+    retry_plan = None
+    retry_plan_error = None
+    try:
+        with _track_agent(ctx, "ReActRetryPlanner", category="llm", metadata={"turn": turn, "modelRole": "planner"}):
+            retry_plan = await _plan_react_retry_with_llm(payload, dilemma, turn)
+    except Exception as exc:
+        retry_plan_error = str(exc)
+        logger.warning("LLM ReAct retry planner failed for request %s: %s", ctx.state.get("request_id"), exc)
 
-    eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-    if eco:
-        eco.track_stage("ReActReasoner")
+    if retry_plan and retry_plan.get("action") == "retry":
+        react_search_query = retry_plan["retryQuery"]
+        planned_keywords = retry_plan.get("focusKeywords") or []
+        keywords = list(dict.fromkeys([*keywords, *planned_keywords]))[:8]
+        reason = f"LLM retry planner: {retry_plan['reason']}"
+        skip_retry = False
+    elif retry_plan_error:
+        react_search_query = payload.get("searchQuery") or dilemma
+        reason = "LLM retry planner failed; finalize without deterministic retry fallback."
+        skip_retry = True
+    elif retry_plan and retry_plan.get("action") == "finalize":
+        react_search_query = payload.get("searchQuery") or dilemma
+        reason = "LLM retry planner chose to finalize without another retrieval attempt."
+        skip_retry = True
+    else:
+        react_search_query = dilemma
+        skip_retry = False
+
+    route_hint = "retry" if retry_plan and retry_plan.get("action") == "retry" else "finalize" if skip_retry else "initial"
+    with _track_agent(ctx, "ReActReasoner", category="workflow", metadata={"turn": turn, "routeHint": route_hint}):
+        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
+        if eco:
+            eco.track_stage("ReActReasoner")
 
     return {
         **payload,
@@ -337,6 +587,10 @@ async def react_reason_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "reactLoopLimit": settings.react_max_turns,
         "reactReasoning": reason,
         "reactSearchQuery": react_search_query,
+        "keywords": keywords,
+        "reactRetryPlan": retry_plan,
+        "reactRetryPlanError": retry_plan_error,
+        "skipRetryRetrieval": skip_retry,
         "reactLoopLog": [
             *payload.get("reactLoopLog", []),
             f"Turn {turn} Reason: {reason}",
@@ -344,10 +598,36 @@ async def react_reason_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+@node(name="react_reason")
+async def react_reason_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
+    """Reason about the next retrieval/synthesis attempt in a bounded ReAct loop."""
+    payload = node_input if isinstance(node_input, dict) else {}
+    return await _react_reason_impl(ctx, payload)
+
+
 @node(name="retriever")
 async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     payload = node_input if isinstance(node_input, dict) else {}
+    if payload.get("plannerError"):
+        _mark_agent(ctx, "McpRetriever", category="tool", status="skipped", metadata={"reason": "planner_unavailable"})
+        return {
+            **payload,
+            "searchQuery": payload.get("dilemma") or ctx.state.get("dilemma", ""),
+            "retrievalQueries": [],
+            "multiQueryUsed": False,
+            "hybridSource": None,
+            "candidatesCount": 0,
+            "rerankedCitations": [],
+            "citations": [],
+            "retrievalViaMcp": False,
+            "contextSufficient": False,
+            "topRetrievalScore": 0,
+            "retrievalThreshold": settings.retrieval_confidence_threshold,
+        }
+    if payload.get("skipRetryRetrieval"):
+        _mark_agent(ctx, "McpRetriever", category="tool", status="skipped", metadata={"reason": "retry_planner_finalized"})
+        return payload
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     search_query = payload.get("reactSearchQuery") or dilemma
     keywords = payload.get("keywords", [])
@@ -360,11 +640,17 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     use_multi_query = bool(payload.get("multiQueryEnabled")) and int(payload.get("reactTurn") or 1) == 1 and len(sub_queries) > 1
     retrieval_queries = sub_queries[:3] if use_multi_query else [search_query]
     try:
-        retrieval_results = [
-            await retrieve_via_mcp(query, keywords, limit=6 if use_multi_query else 10, top_k=2 if use_multi_query else 3)
-            for query in retrieval_queries
-        ]
-        retrieval = _merge_retrieval_results(retrieval_results, top_k=3) if use_multi_query else retrieval_results[0]
+        with _track_agent(
+            ctx,
+            "McpRetriever",
+            category="tool",
+            metadata={"queryCount": len(retrieval_queries), "multiQuery": use_multi_query},
+        ):
+            retrieval_results = [
+                await retrieve_via_mcp(query, keywords, limit=6 if use_multi_query else 10, top_k=2 if use_multi_query else 3)
+                for query in retrieval_queries
+            ]
+            retrieval = _merge_retrieval_results(retrieval_results, top_k=3) if use_multi_query else retrieval_results[0]
     except Exception as exc:
         retrieval_error = _nested_exception(exc, RetrievalError)
         if not retrieval_error:
@@ -427,16 +713,37 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
 @node(name="synthesize")
 async def synthesize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     payload = node_input if isinstance(node_input, dict) else {}
+    if payload.get("plannerError"):
+        _mark_agent(ctx, "Synthesizer", category="llm", metadata={"reason": "planner_unavailable"})
+        return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
+    if payload.get("skipRetryRetrieval"):
+        _mark_agent(ctx, "Synthesizer", category="llm", status="skipped", metadata={"reason": "retry_planner_finalized"})
+        return payload
     if not payload.get("contextSufficient", True):
+        _mark_agent(ctx, "Synthesizer", category="llm", metadata={"reason": "context_insufficient"})
         return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
     if payload.get("preSynthesisApprovalRequired"):
+        _mark_agent(ctx, "Synthesizer", category="llm", metadata={"reason": "pre_synthesis_approval"})
         return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
 
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     citations = payload.get("citations") or []
     tone_msg = payload.get("toneMsg", "")
 
-    pathway, metrics = await generate_moral_pathway(dilemma, citations, tone_msg)
+    try:
+        with _track_agent(ctx, "Synthesizer", category="llm", metadata={"modelRole": "synthesizer"}):
+            pathway, metrics = await generate_moral_pathway(dilemma, citations, tone_msg)
+    except PipelineError as exc:
+        logger.warning("Synthesizer unavailable for request %s: %s", ctx.state.get("request_id"), exc)
+        _mark_agent(ctx, "Synthesizer", category="llm", status="error", metadata={"reason": "synthesizer_unavailable"})
+        return {
+            **payload,
+            "synthesizerError": str(exc),
+            "synthesizerUserMessage": exc.user_message,
+            "moralPathway": None,
+            "quantizedMetrics": None,
+            "synthesisEngine": None,
+        }
     eco: EcoTracker | None = _runtime_context(ctx).get("eco")
     reranked = payload.get("rerankedCitations") or []
     if eco:
@@ -452,17 +759,28 @@ async def synthesize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
 @node(name="judge")
 async def judge_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     payload = node_input if isinstance(node_input, dict) else {}
+    if payload.get("plannerError"):
+        _mark_agent(ctx, "GEvalJudge", category="llm", metadata={"reason": "planner_unavailable"})
+        return {**payload, "auditScores": None, "confidence": 0}
+    if payload.get("synthesizerError"):
+        _mark_agent(ctx, "GEvalJudge", category="llm", metadata={"reason": "synthesizer_unavailable"})
+        return {**payload, "auditScores": None, "confidence": payload.get("confidence", 0)}
+    if payload.get("skipRetryRetrieval"):
+        _mark_agent(ctx, "GEvalJudge", category="llm", status="skipped", metadata={"reason": "retry_planner_finalized"})
+        return payload
     if not payload.get("contextSufficient", True):
+        _mark_agent(ctx, "GEvalJudge", category="llm", metadata={"reason": "context_insufficient"})
         return {**payload, "auditScores": None, "confidence": payload.get("topRetrievalScore", 0)}
     if payload.get("preSynthesisApprovalRequired"):
+        _mark_agent(ctx, "GEvalJudge", category="llm", metadata={"reason": "pre_synthesis_approval"})
         reranked = payload.get("rerankedCitations") or []
         confidence = reranked[0].get("score", 0) if reranked else payload.get("topRetrievalScore", 0)
         return {**payload, "auditScores": None, "confidence": confidence}
-
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     citations = payload.get("citations") or []
     pathway = payload.get("moralPathway") or ""
-    audit = run_g_eval_judge(dilemma, citations, pathway)
+    with _track_agent(ctx, "GEvalJudge", category="llm", metadata={"modelRole": "judge"}):
+        audit = await run_g_eval_judge(dilemma, citations, pathway)
     pg = _runtime_context(ctx).get("pg")
     request_id = ctx.state.get("request_id")
     await persist_audit_log(pg, request_id, audit)
@@ -481,12 +799,24 @@ async def react_observe_node(ctx, node_input: dict[str, Any]) -> Event:
     audit = payload.get("auditScores") or {}
     context_sufficient = bool(payload.get("contextSufficient", True))
     audit_passed = bool(audit.get("passed", False))
+    planner_error = payload.get("plannerError")
+    synthesizer_error = payload.get("synthesizerError")
     retrieval_error = payload.get("retrievalError")
     retrieval_blocked = payload.get("retrievalBlocked")
+    retry_planner_stopped = bool(payload.get("skipRetryRetrieval"))
 
     route = "finalize"
     observation = "Observation: quality threshold passed; finalize response."
-    if retrieval_error:
+    if planner_error:
+        observation = "Observation: strategic planner failed; finalize with a planner-unavailable message."
+    elif synthesizer_error:
+        observation = "Observation: guidance synthesizer failed; finalize with a synthesizer-unavailable message."
+    elif retry_planner_stopped:
+        if payload.get("reactRetryPlanError"):
+            observation = "Observation: retry planner failed; finalize without deterministic retry fallback."
+        else:
+            observation = "Observation: retry planner chose to finalize without another retrieval attempt."
+    elif retrieval_error:
         observation = "Observation: retrieval service failed; finalize with a graceful retrieval message."
     elif retrieval_blocked:
         observation = f"Observation: retrieval blocked because {retrieval_blocked}; finalize without synthesis."
@@ -505,9 +835,10 @@ async def react_observe_node(ctx, node_input: dict[str, Any]) -> Event:
         else:
             observation += " Finalize because the loop limit was reached."
 
-    eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-    if eco:
-        eco.track_stage("ReActObserve", confidence=payload.get("confidence", 0))
+    with _track_agent(ctx, "ReActObserve", category="workflow", metadata={"turn": turn, "route": route}):
+        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
+        if eco:
+            eco.track_stage("ReActObserve", confidence=payload.get("confidence", 0))
 
     next_payload = {
         **payload,
@@ -538,6 +869,48 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     else:
         power = {}
         totals = {"ecoBreakdown": []}
+
+    if payload.get("plannerError"):
+        result = build_planner_unavailable_response(
+            dilemma=payload.get("dilemma") or ctx.state.get("dilemma", ""),
+            request_id=request_id,
+            optimizer=payload,
+            eco_breakdown=totals.get("ecoBreakdown", []),
+            power_metrics=power,
+            detail=str(payload.get("plannerError")),
+        )
+        result["pipeline"] = "Google ADK ReAct Workflow + MCP Milvus Retrieval"
+        result["originalQuery"] = payload.get("originalQuery") or ctx.state.get("original_dilemma") or result.get("originalQuery")
+        result["rewrittenQuery"] = payload.get("rewrittenQuery") or ctx.state.get("rewritten_dilemma")
+        result["queryRewriteApplied"] = payload.get("queryRewriteApplied", False)
+        result["queryRewriteRules"] = payload.get("queryRewriteRules", [])
+        result["previousContextUsed"] = payload.get("previousContextUsed", False)
+        result["previousContextQuestion"] = payload.get("previousContextQuestion")
+        result["executionPlan"] = _execution_plan(payload)
+        result["loopDetails"] = _react_loop_details(payload)
+        _attach_cache_policy(result, payload.get("cacheKey"))
+        return await _finalize_with_trace(ctx, result)
+
+    if payload.get("synthesizerError"):
+        result = build_synthesizer_unavailable_response(
+            payload=payload,
+            request_id=request_id,
+            eco_breakdown=totals.get("ecoBreakdown", []),
+            power_metrics=power,
+            detail=str(payload.get("synthesizerError")),
+            user_message=payload.get("synthesizerUserMessage"),
+        )
+        result["pipeline"] = "Google ADK ReAct Workflow + MCP Milvus Retrieval"
+        result["originalQuery"] = payload.get("originalQuery") or ctx.state.get("original_dilemma") or result.get("originalQuery")
+        result["rewrittenQuery"] = payload.get("rewrittenQuery") or ctx.state.get("rewritten_dilemma")
+        result["queryRewriteApplied"] = payload.get("queryRewriteApplied", False)
+        result["queryRewriteRules"] = payload.get("queryRewriteRules", [])
+        result["previousContextUsed"] = payload.get("previousContextUsed", False)
+        result["previousContextQuestion"] = payload.get("previousContextQuestion")
+        result["executionPlan"] = _execution_plan(payload)
+        result["loopDetails"] = _react_loop_details(payload)
+        _attach_cache_policy(result, payload.get("cacheKey"))
+        return await _finalize_with_trace(ctx, result)
 
     if not payload.get("contextSufficient", True):
         retrieval_payload = {
@@ -586,7 +959,8 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["previousContextQuestion"] = payload.get("previousContextQuestion")
         result["executionPlan"] = _execution_plan(payload)
         result["loopDetails"] = _react_loop_details(payload)
-        return result
+        _attach_cache_policy(result, payload.get("cacheKey"))
+        return await _finalize_with_trace(ctx, result)
 
     if payload.get("preSynthesisApprovalRequired"):
         candidate_items = payload.get("rerankedCitations") or payload.get("candidates") or []
@@ -643,7 +1017,8 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
                 "selectedVerseIds": selected_verse_ids,
             },
         }
-        return result
+        _attach_cache_policy(result, payload.get("cacheKey"))
+        return await _finalize_with_trace(ctx, result)
 
     audit = payload.get("auditScores") or {}
     if not audit.get("passed", False):
@@ -664,7 +1039,8 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["previousContextQuestion"] = payload.get("previousContextQuestion")
         result["executionPlan"] = _execution_plan(payload, audit)
         result["loopDetails"] = _react_loop_details(payload)
-        return result
+        _attach_cache_policy(result, payload.get("cacheKey"))
+        return await _finalize_with_trace(ctx, result)
 
     hitl_enabled = bool(ctx.state.get("hitl_enabled", settings.hitl_enabled))
     reranked = payload.get("rerankedCitations") or []
@@ -693,6 +1069,7 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "retrievalQueries": payload.get("retrievalQueries", []),
         "multiQueryUsed": payload.get("multiQueryUsed", False),
         "moralPathway": payload.get("moralPathway"),
+        "guidanceReasons": build_guidance_reasons(dilemma, citations, payload.get("moralPathway"), audit),
         "quantizedMetrics": payload.get("quantizedMetrics"),
         "synthesisEngine": payload.get("synthesisEngine"),
         "confidence": payload.get("confidence", 0),
@@ -715,10 +1092,11 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         }
 
     cache_key = payload.get("cacheKey")
+    _attach_cache_policy(result, cache_key)
     if redis and cache_key and _is_safe_to_cache(result):
         await store_semantic_cache(redis, cache_key, result)
 
-    return result
+    return await _finalize_with_trace(ctx, result)
 
 
 def _build_workflow() -> Workflow:
@@ -752,6 +1130,19 @@ def _get_runner() -> Runner:
     return _runner
 
 
+async def _delete_adk_session(user_email: str, session_id: str | None) -> None:
+    if not session_id:
+        return
+    try:
+        await _session_service.delete_session(
+            app_name="anayaa",
+            user_id=user_email,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.exception("Failed to delete ADK session %s", session_id)
+
+
 async def run_adk_pipeline(
     dilemma: str,
     user_email: str,
@@ -773,20 +1164,25 @@ async def run_adk_pipeline(
             code="adk_disabled",
         )
 
+    request_id = str(eco.request_id)
+    latency = AgentLatencyTracker(request_id=request_id)
     eco.track_stage("SanitizeGate")
-    rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
+    with latency.track("QueryRewriter", category="deterministic"):
+        rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
     rewritten_dilemma = rewrite["rewrittenQuery"]
-    optimizer_preview = {
-        **optimize_query(rewritten_dilemma, []),
-        **rewrite,
-    }
+    with latency.track("QueryOptimizer", category="deterministic", metadata={"phase": "pre_adk_preview"}):
+        optimizer_preview = {
+            **optimize_query(rewritten_dilemma, []),
+            **rewrite,
+        }
     eco.track_stage("QueryOptimizer")
 
-    cached = None if hitl_enabled else await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
-    if cached:
+    with latency.track("SemanticCache", category="cache", metadata={"enabled": not hitl_enabled}):
+        cached = None if hitl_enabled else await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
+    if cached and _is_safe_to_cache(cached):
         eco.track_stage("CacheReturn", cache_hit=True, confidence=95)
         power = eco.audit_power_footprint(True, 95)
-        return {
+        cached_result = {
             **cached,
             "cacheHit": True,
             "orchestrator": "google-adk",
@@ -799,10 +1195,18 @@ async def run_adk_pipeline(
             "powerMetrics": power,
             "ecoBreakdown": eco.totals()["ecoBreakdown"],
             "requestId": eco.request_id,
+            "agentLatencyMetrics": latency.snapshot(),
         }
+        cached_result["cachePolicy"] = {
+            **cached_result.get("cachePolicy", {}),
+            "cacheable": True,
+            "reason": "cache_hit",
+        }
+        await persist_request_plan_trace(pg, request_id, cached_result)
+        return cached_result
 
-    request_id = str(eco.request_id)
-    _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco}
+    _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco, "latency": latency}
+    session_id: str | None = None
     try:
         runner = _get_runner()
         session = await _session_service.create_session(
@@ -822,6 +1226,7 @@ async def run_adk_pipeline(
                 "optimizer_preview": optimizer_preview,
             },
         )
+        session_id = session.id
 
         final_payload: dict[str, Any] | None = None
         async for event in runner.run_async(
@@ -833,6 +1238,7 @@ async def run_adk_pipeline(
                 if "status" in event.output or "moralPathway" in event.output or event.author in {"finalize", "anayaa_dharma_workflow"}:
                     final_payload = event.output
     finally:
+        await _delete_adk_session(user_email, session_id)
         _runtime_contexts.pop(request_id, None)
 
     if not final_payload:

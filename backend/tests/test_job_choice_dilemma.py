@@ -1,6 +1,6 @@
 from app.agents.adk_workflow import _retrieval_matches_query
 from app.agents.workflow import _extract_planner_keywords, rewrite_malformed_query
-from app.llm.generator import _build_grounded_fallback_summary, _build_synthesis_prompt
+from app.llm.generator import _build_synthesis_prompt
 
 
 JOB_CHOICE_QUERY = (
@@ -77,16 +77,3 @@ def test_job_choice_synthesis_prompt_does_not_expose_internal_dharma_frame():
     assert "I am asking a dharma dilemma" not in dilemma_section
     assert "job" in dilemma_section
     assert "needs" in dilemma_section
-
-
-def test_job_choice_fallback_is_specific_and_does_not_expose_internal_frame():
-    rewritten = rewrite_malformed_query(JOB_CHOICE_QUERY)["rewrittenQuery"]
-    summary = _build_grounded_fallback_summary(
-        rewritten,
-        [{"keywords": ["duty", "karma", "results", "work", "career"]}],
-    )
-
-    assert "I am asking a dharma dilemma" not in summary
-    assert "not a random one" in summary
-    assert "non-negotiable needs" in summary
-    assert "Write one clear record of what happened" not in summary

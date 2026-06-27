@@ -4,11 +4,12 @@ from __future__ import annotations
 import logging
 import re
 import time
+from html import unescape
 from typing import Any
 
 import httpx
 
-from app.agents.pipeline_errors import ServiceUnavailableError
+from app.agents.pipeline_errors import ServiceUnavailableError, SynthesisRejectedError
 from app.config import get_settings
 from app.llm.router import select_model
 from app.security.harm_normalizer import normalize_harmful_framing_text
@@ -26,27 +27,110 @@ IDENTITY_FRAME_RE = re.compile(
     r"how should I understand (?P<terms>.*?)\?\s*$",
     re.I,
 )
+ANSWER_LABEL_RE = re.compile(
+    r"^(?:one[- ]line summary|summary|reflection|judg(?:e)?ment|next step|action|scripture grounding|grounding)\s*:",
+    re.I,
+)
+BARE_ANSWER_LABELS = {
+    "reflection": "Reflection",
+    "judgement": "Judgement",
+    "judgment": "Judgement",
+    "next step": "Next step",
+    "action": "Next step",
+    "scripture grounding": "Scripture grounding",
+    "grounding": "Scripture grounding",
+}
+BARE_ANSWER_LABEL_RE = re.compile(
+    r"^(reflection|judg(?:e)?ment|next step|action|scripture grounding|grounding)\s*$",
+    re.I,
+)
+SUMMARY_LABEL_RE = re.compile(r"^(?:one[- ]line summary|summary)\s*:", re.I)
+DETAIL_LABEL_RE = re.compile(
+    r"^(reflection|judg(?:e)?ment|next step|action|scripture grounding|grounding)\s*:\s*(.*)$",
+    re.I,
+)
+PROMPT_ECHO_LINE_RE = re.compile(
+    r"^(?:"
+    r"Dilemma:|"
+    r"Must stay focused on these user-topic words:|"
+    r"Tone mode:|"
+    r"Retrieved scriptures:|"
+    r"Citation anchors:|"
+    r"\d+\.\s*\[[^\]]+\]\s+.+|"
+    r"\d+\.\s*.+\s+anchors:\s*.+|"
+    r"Write exactly these \d+ labeled sections\b|"
+    r"Use simple everyday words\b|"
+    r"Each title must be visible\b|"
+    r"Only make claims supported by\b|"
+    r"If a detail is not given\b|"
+    r"For one-word, fragmentary, or broad questions\b|"
+    r"For this business-integrity question\b|"
+    r"Do not (?:include markdown|assume the user|name specific commercial|invent facts|use markdown)\b|"
+    r"The Summary must clearly address\b|"
+    r"Avoid abstract filler\b|"
+    r"One-line summary:\s*answer the dilemma directly\b|"
+    r"Summary:\s*answer the dilemma directly\b|"
+    r"Reflection:\s*explain the feeling\b|"
+    r"Judgement:\s*say what choice\b|"
+    r"Judgment:\s*say what choice\b|"
+    r"Next step:\s*give one concrete\b|"
+    r"Scripture grounding:\s*write 2 plain sentences\b"
+    r")",
+    re.I,
+)
+PROMPT_LIKE_RESPONSE_RE = re.compile(
+    r"\b(?:"
+    r"answer the dilemma directly|"
+    r"business-integrity question|"
+    r"dharma question about|"
+    r"retrieved scriptures point toward|"
+    r"use the citations as a boundary|"
+    r"write 2 plain sentences"
+    r")\b",
+    re.I,
+)
+FOCUS_TERM_ALIASES = {
+    "disciplined": ["discipline", "self-control"],
+    "discipline": ["disciplined", "self-control"],
+    "scamming": ["scam"],
+    "scam": ["scamming"],
+}
+
+
+def _active_ollama_warmup_models() -> list[str]:
+    models: list[str] = []
+    for task in ["planner", "synthesizer", "judge"]:
+        model = select_model(task)
+        if model == "gemini-flash" or model in models:
+            continue
+        models.append(model)
+    return models
+
+
+async def prewarm_ollama_models() -> None:
+    """Load the selected local Ollama models before the first user query."""
+    settings = get_settings()
+    async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as client:
+        for model in _active_ollama_warmup_models():
+            try:
+                response = await client.post(
+                    "/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": "ready",
+                        "stream": False,
+                        "keep_alive": "30m",
+                        "options": {"temperature": 0.0, "num_predict": 1, "num_ctx": 512},
+                    },
+                )
+                response.raise_for_status()
+            except Exception as exc:
+                logger.warning("Ollama model warmup skipped for %s: %s", model, exc)
 
 
 async def prewarm_synthesizer() -> None:
-    """Load the selected Ollama synthesizer model before the first user query."""
-    settings = get_settings()
-    model = select_model("synthesizer")
-    try:
-        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as client:
-            response = await client.post(
-                "/api/generate",
-                json={
-                    "model": model,
-                    "prompt": "ready",
-                    "stream": False,
-                    "keep_alive": "30m",
-                    "options": {"temperature": 0.0, "num_predict": 1, "num_ctx": 512},
-                },
-            )
-            response.raise_for_status()
-    except Exception as exc:
-        logger.warning("Ollama synthesizer warmup skipped: %s", exc)
+    """Backward-compatible wrapper for startup warmup."""
+    await prewarm_ollama_models()
 
 
 async def generate_moral_pathway(
@@ -90,25 +174,25 @@ async def generate_moral_pathway(
                         {"role": "user", "content": prompt},
                     ],
                     "stream": False,
+                    "think": False,
                     "keep_alive": "30m",
                     "options": {"temperature": 0.0, "num_predict": 320, "num_ctx": 2048},
                 },
             )
             response.raise_for_status()
             data = response.json()
-            pathway = (data.get("message") or {}).get("content", "").strip()
+            pathway = _clean_synthesis_output((data.get("message") or {}).get("content", ""))
             if not pathway:
                 raise ValueError("Empty LLM response")
 
             elapsed_ms = int((time.perf_counter() - started) * 1000)
-            used_fallback = False
-            if _should_use_grounded_fallback(safe_dilemma, citations, pathway):
-                logger.warning("LLM synthesis drifted from query; using grounded fallback summary")
-                pathway = _build_grounded_fallback_summary(safe_dilemma, citations)
-                used_fallback = True
+            rejection_reason = _synthesis_rejection_reason(safe_dilemma, citations, pathway)
+            if rejection_reason:
+                logger.warning("LLM synthesis rejected (%s); no fallback answer will be shown", rejection_reason)
+                raise SynthesisRejectedError(rejection_reason)
 
             metrics = {
-                "engine": "Grounded fallback" if used_fallback else "Ollama LLM",
+                "engine": "Ollama LLM",
                 "modelName": model,
                 "ttftMs": elapsed_ms,
                 "totalTokens": data.get("eval_count") or len(pathway) // 4,
@@ -132,13 +216,24 @@ def _build_synthesis_prompt(
 ) -> str:
     dilemma = _visible_dilemma_text(dilemma)
     citation_lines = []
+    anchor_lines = []
     for idx, citation in enumerate(citations[:3], start=1):
+        keywords = [
+            str(keyword).strip().lower()
+            for keyword in citation.get("keywords", [])[:4]
+            if str(keyword).strip()
+        ]
         citation_lines.append(
             f"{idx}. [{citation.get('faith')}] {citation.get('source')} "
             f"{citation.get('chapter')}:{citation.get('verse')} — "
             f"\"{citation.get('translation')}\""
         )
+        anchor_lines.append(
+            f"{idx}. {citation.get('source')} {citation.get('chapter')}:{citation.get('verse')} "
+            f"anchors: {', '.join(keywords) if keywords else citation.get('source')}"
+        )
     citations_block = "\n".join(citation_lines)
+    anchors_block = "\n".join(anchor_lines)
     tone = tone_msg or "Balanced guidance mode"
     focus_terms = _query_focus_terms(dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
@@ -156,13 +251,14 @@ def _build_synthesis_prompt(
         f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
         f"Retrieved scriptures:\n{citations_block}\n\n"
+        f"Citation anchors:\n{anchors_block}\n\n"
         "Write exactly these 5 labeled sections, 180 words or fewer total.\n"
         "Use simple everyday words. Each title must be visible at the start of its own line:\n"
         "One-line summary: answer the dilemma directly in one compact sentence.\n"
         "Reflection: explain the feeling or conflict in simple words, without blaming the user.\n"
         "Judgement: say what choice seems wisest and kindest.\n"
         "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
-        "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name the source or tradition when useful.\n"
+        "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
         f"{business_integrity_instruction}"
@@ -173,9 +269,95 @@ def _build_synthesis_prompt(
     )
 
 
+def _clean_synthesis_output(pathway: str) -> str:
+    """Remove prompt-instruction echoes before the pathway reaches the UI."""
+    lines = [
+        re.sub(r"\s+", " ", line.replace("**", "").lstrip("#").strip()).strip("` ")
+        for line in str(pathway or "").splitlines()
+    ]
+    lines = [line for line in lines if line]
+    has_answer_label = any(ANSWER_LABEL_RE.match(line) for line in lines)
+    cleaned: list[str] = []
+    reached_answer = not has_answer_label
+
+    for line in lines:
+        if PROMPT_ECHO_LINE_RE.match(line):
+            continue
+        if not reached_answer:
+            # Drop preamble until the first real answer section appears.
+            if ANSWER_LABEL_RE.match(line):
+                reached_answer = True
+            else:
+                continue
+        cleaned.append(line)
+
+    return _normalize_answer_section_labels(cleaned).strip()
+
+
+def _normalize_answer_section_labels(lines: list[str]) -> str:
+    """Normalize minor label drift from local models into the UI guidance contract."""
+    normalized: list[str] = []
+    pre_detail_lines: list[str] = []
+    saw_summary = False
+
+    def flush_summary() -> None:
+        nonlocal saw_summary
+        if not pre_detail_lines:
+            return
+        summary_lines = pre_detail_lines
+        if len(summary_lines) > 1 and _looks_like_short_title(summary_lines[0]):
+            summary_lines = summary_lines[1:]
+        summary_text = " ".join(summary_lines).strip()
+        if summary_text:
+            normalized.append(f"Summary: {summary_text}")
+            saw_summary = True
+        pre_detail_lines.clear()
+
+    for line in lines:
+        if SUMMARY_LABEL_RE.match(line):
+            flush_summary()
+            normalized.append(line)
+            saw_summary = True
+            continue
+
+        detail_match = DETAIL_LABEL_RE.match(line)
+        if detail_match:
+            if not saw_summary:
+                flush_summary()
+            label = BARE_ANSWER_LABELS[detail_match.group(1).lower()]
+            detail_text = detail_match.group(2).strip()
+            normalized.append(f"{label}: {detail_text}" if detail_text else f"{label}:")
+            continue
+
+        bare_match = BARE_ANSWER_LABEL_RE.match(line)
+        if bare_match:
+            if not saw_summary:
+                flush_summary()
+            normalized.append(f"{BARE_ANSWER_LABELS[bare_match.group(1).lower()]}:")
+            continue
+
+        if normalized and normalized[-1].endswith(":"):
+            normalized[-1] = f"{normalized[-1]} {line}".strip()
+            continue
+
+        if not saw_summary and not normalized:
+            pre_detail_lines.append(line)
+            continue
+
+        normalized.append(line)
+
+    flush_summary()
+    return "\n".join(normalized)
+
+
+def _looks_like_short_title(value: str) -> bool:
+    words = re.findall(r"\b\w+\b", value)
+    return 0 < len(words) <= 3 and not re.search(r"[.!?;:,]", value)
+
+
 def _visible_dilemma_text(dilemma: str) -> str:
     """Return the user-facing dilemma, not Anayaa's internal retrieval frame."""
-    text = re.sub(r"\s+", " ", str(dilemma or "")).strip()
+    text = re.sub(r"\s+", " ", unescape(str(dilemma or ""))).strip()
     match = DHARMA_FRAME_RE.match(text)
     if match:
         return match.group("situation").strip(" .?!")
@@ -239,7 +421,7 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     pathway_lower = pathway.lower()
     focus_terms = _query_focus_terms(dilemma)
     if focus_terms:
-        matches = [term for term in focus_terms if term in pathway_lower]
+        matches = [term for term in focus_terms if _focus_term_in_text(term, pathway_lower)]
         required_matches = 1 if len(focus_terms) <= 2 else 2
         if len(matches) < required_matches:
             return False
@@ -258,10 +440,30 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     return not citation_terms or any(term in pathway_lower for term in citation_terms[:8])
 
 
-def _should_use_grounded_fallback(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
+def _focus_term_in_text(term: str, text: str) -> bool:
+    candidates = [term, *FOCUS_TERM_ALIASES.get(term, [])]
+    return any(candidate and candidate in text for candidate in candidates)
+
+
+def _should_reject_synthesis(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
+    return bool(_synthesis_rejection_reason(dilemma, citations, pathway))
+
+
+def _synthesis_rejection_reason(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> str:
+    # Return the first guardrail reason so logs explain why the LLM text was rejected.
+    if _contains_prompt_like_response_text(pathway):
+        return "prompt_like_response"
+    if not re.search(r"^(?:one[- ]line summary|summary)\s*:\s*\S+", pathway, re.I | re.M):
+        return "missing_summary_section"
     if not _is_summary_relevant(dilemma, citations, pathway):
-        return True
-    return _is_business_integrity_dilemma(dilemma) and _business_integrity_answer_drifted(pathway)
+        return "summary_not_relevant_to_query"
+    if _is_business_integrity_dilemma(dilemma) and _business_integrity_answer_drifted(pathway):
+        return "business_integrity_drift"
+    return ""
+
+
+def _contains_prompt_like_response_text(pathway: str) -> bool:
+    return bool(PROMPT_LIKE_RESPONSE_RE.search(str(pathway or "")))
 
 
 def _business_integrity_answer_drifted(pathway: str) -> bool:
@@ -288,71 +490,8 @@ def _business_integrity_answer_drifted(pathway: str) -> bool:
     return sum(1 for term in integrity_terms if term in lower) < 2
 
 
-def _build_grounded_fallback_summary(dilemma: str, citations: list[dict[str, Any]]) -> str:
-    visible_dilemma = _visible_dilemma_text(dilemma)
-    dilemma_text = _shorten_sentence(visible_dilemma)
-    citation_keywords = _citation_keywords(citations)
-    grounding = ", ".join(citation_keywords[:3]) if citation_keywords else "careful and truthful action"
-
-    if _is_livelihood_choice_dilemma(visible_dilemma):
-        return "\n".join(
-            [
-                f"One-line summary: Make a thoughtful choice about {dilemma_text}, not a random one.",
-                "Reflection: This is a question about responsibility, real needs, and choosing without panic.",
-                "Judgement: Choose the option that responsibly supports your needs while staying honest, steady, and aligned with your abilities.",
-                "Next step: Write down your non-negotiable needs, then compare each job option against income, dignity, location, growth, and family responsibilities.",
-                f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
-            ]
-        )
-
-    if _is_business_integrity_dilemma(visible_dilemma):
-        return "\n".join(
-            [
-                f"One-line summary: Treat {dilemma_text} as a business-integrity question, not just a profit question.",
-                "Reflection: A business model is not automatically wrong, but it becomes harmful when it depends on hiding risk, misleading customers, or avoiding responsibility.",
-                "Judgement: Choose transparent selling, reliable fulfillment, and fair customer treatment over quick money.",
-                "Next step: Check supplier reliability, shipping times, refund policies, product quality, and customer disclosures before selling anything.",
-                f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
-            ]
-        )
-
-    return "\n".join(
-        [
-            f"One-line summary: Treat this as a dharma question about {dilemma_text}.",
-            "Reflection: The situation needs a careful response, not a rushed or imagined one.",
-            "Judgement: Choose the action that is honest, kind, and least harmful.",
-            "Next step: Write the concrete choice in front of you, then choose one practical action that protects responsibility, truth, and peace.",
-            f"Scripture grounding: The retrieved scriptures point toward {grounding}, so keep the advice tied to those themes. Use the citations as a boundary: act with integrity and avoid unsupported claims or harmful escalation.",
-        ]
-    )
-
-
-def _citation_keywords(citations: list[dict[str, Any]]) -> list[str]:
-    terms: list[str] = []
-    for citation in citations:
-        for raw_term in citation.get("keywords") or []:
-            term = str(raw_term).strip().lower()
-            if len(term) >= 4 and term not in terms:
-                terms.append(term)
-    return terms
-
-
-def _is_livelihood_choice_dilemma(value: str) -> bool:
-    lower = value.lower()
-    livelihood_terms = {"job", "jobs", "work", "career", "livelihood"}
-    choice_terms = {"random", "randomly", "needs", "need", "fulfills", "select", "choose"}
-    return any(term in lower for term in livelihood_terms) and any(term in lower for term in choice_terms)
-
-
 def _is_business_integrity_dilemma(value: str) -> bool:
     lower = value.lower()
     business_terms = {"dropshipping", "business", "selling", "seller", "customer", "profit"}
     integrity_terms = {"scam", "scamming", "honest", "integrity", "mislead", "fraud", "trust"}
     return any(term in lower for term in business_terms) and any(term in lower for term in integrity_terms)
-
-
-def _shorten_sentence(value: str, max_words: int = 18) -> str:
-    words = re.sub(r"\s+", " ", value).strip(" .").split()
-    if len(words) <= max_words:
-        return " ".join(words)
-    return " ".join(words[:max_words]) + "..."

@@ -1,7 +1,6 @@
 from app.agents.adk_workflow import _retrieval_matches_query
 from app.agents.workflow import _extract_planner_keywords, rewrite_malformed_query
 from app.llm.generator import (
-    _build_grounded_fallback_summary,
     _business_integrity_answer_drifted,
     _build_synthesis_prompt,
     _is_summary_relevant,
@@ -54,23 +53,10 @@ def test_dropshipping_answer_relevance_accepts_business_integrity_response():
         "Reflection: The business question is about honesty and trust.\n"
         "Judgement: Choose transparent selling over quick profit.\n"
         "Next step: Check supplier reliability, shipping times, refund terms, and customer disclosures before selling.\n"
-        "Scripture grounding: The retrieved scriptures point toward integrity and business morality."
+        "Scripture grounding: Matthew supports guidance rooted in integrity and business morality."
     )
 
     assert _is_summary_relevant(rewritten, [{"keywords": ["integrity", "business", "wealth"]}], pathway)
-
-
-def test_dropshipping_fallback_is_business_specific_without_focus_phrase():
-    rewritten = rewrite_malformed_query(TYPO_QUERY)["rewrittenQuery"]
-    summary = _build_grounded_fallback_summary(
-        rewritten,
-        [{"keywords": ["integrity", "business", "wealth"]}],
-    )
-
-    assert "Focus on the real question" not in summary
-    assert "business-integrity question" in summary
-    assert "supplier reliability" in summary
-    assert "customer disclosures" in summary
 
 
 def test_dropshipping_prompt_blocks_unsupported_business_assumptions():
@@ -111,7 +97,7 @@ def test_dropshipping_drift_guard_accepts_direct_dharma_answer():
         "Reflection: The business question is about honesty and trust.\n"
         "Judgement: Choose transparent selling and accountability.\n"
         "Next step: Check supplier reliability, shipping times, refund terms, and customer disclosures before selling.\n"
-        "Scripture grounding: The retrieved scriptures point toward integrity and business morality."
+        "Scripture grounding: Matthew supports guidance rooted in integrity and business morality."
     )
 
     assert not _business_integrity_answer_drifted(pathway)

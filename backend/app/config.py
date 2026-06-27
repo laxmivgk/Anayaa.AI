@@ -14,28 +14,29 @@ class Settings(BaseSettings):
 
     jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
     jwt_exp_minutes: int = 15
-    postgres_host: str = "localhost"
+    postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
     postgres_db: str = "anayaa"
     postgres_user: str = "anayaa"
     postgres_password: str = "anayaa_dev"
-    redis_url: str = "redis://localhost:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
     postgres_enabled: bool = True
     milvus_enabled: bool = True
     # ANAYAA_MILVUS_URI avoids clashing with pymilvus's global MILVUS_URI env (which expects http://)
     milvus_uri: str = Field(default="data/milvus.db", validation_alias="ANAYAA_MILVUS_URI")
     milvus_collection: str = "scripture_verses"
+    offline_mode: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     cross_encoder_enabled: bool = False
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://127.0.0.1:11434"
     gemini_api_key: str = ""
     hitl_enabled: bool = True
     rate_limit_per_minute: int = 20
     session_refresh_rate_limit_per_minute: int = 10
     scriptures_json_path: str = "data/scriptures.json"
     google_studio_scriptures_path: str = "../google_studio/src/data/scriptures.ts"
-    llmlingua_enabled: bool = True
+    llmlingua_enabled: bool = False
     llmlingua_model: str = "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"
     llmlingua_use_v2: bool = True
     llmlingua_use_longllmlingua: bool = False
@@ -48,6 +49,7 @@ class Settings(BaseSettings):
     react_max_turns: int = 2
     audit_logs_retention_days: int = 90
     request_eco_metrics_retention_days: int = 90
+    agent_traces_retention_days: int = 30
     hitl_terminal_retention_days: int = 7
     turns_retention_days: int = 30
     retention_cleanup_interval_seconds: int = 86400

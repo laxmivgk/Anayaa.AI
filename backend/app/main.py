@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import auth, query, system
 from app.auth.session import SessionManager
+from app.auth.users import ensure_users_table
 from app.config import get_settings
 from app.memory.milvus_store import MilvusStore
 from app.memory.postgres import PostgresPool
@@ -13,7 +14,7 @@ from app.memory.redis_cache import RedisCache
 from app.privacy.retention import retention_loop
 from app.retrieval.corpus import load_scriptures_json
 from app.retrieval.embeddings import get_embedder
-from app.llm.generator import prewarm_synthesizer
+from app.llm.generator import prewarm_ollama_models
 
 
 @asynccontextmanager
@@ -24,11 +25,12 @@ async def lifespan(app: FastAPI):
     if not settings.postgres_enabled:
         raise RuntimeError("POSTGRES_ENABLED must be true. PostgreSQL is required.")
     await pg.connect()
+    await ensure_users_table(pg)
     await redis.connect()
     load_scriptures_json()
     corpus = load_scriptures_json()
     get_embedder().embed_query("compassion conflict duty")
-    await prewarm_synthesizer()
+    await prewarm_ollama_models()
 
     milvus = MilvusStore(settings.milvus_uri)
     if not settings.milvus_enabled:
