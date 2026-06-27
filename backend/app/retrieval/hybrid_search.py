@@ -51,12 +51,21 @@ CONCEPT_CLOUDS: dict[str, list[str]] = {
     "anxiety": ["worry", "tomorrow", "anxious", "restless", "fear", "results", "stress", "burden", "pressure", "outcome"],
     "anger": ["fury", "hatred", "vengeance", "revenge", "conflict", "retaliation", "dispute", "violent", "argument"],
     "greed": ["money", "wealth", "financial", "financially", "company", "covet", "belonging", "gain", "ambition", "profit", "stealing", "cheat"],
+<<<<<<< HEAD
+    "business": ["dropshipping", "scam", "scamming", "honesty", "integrity", "fairness", "truth", "wealth", "customer", "selling"],
+=======
+>>>>>>> origin/main
     "duty": ["karma", "work", "prescribed", "action", "obligation", "responsibility", "effort", "career", "job", "survive", "company"],
     "betrayal": ["partner", "partners", "backstab", "enemy", "lying", "cheat", "scam", "business", "friend", "divorce"],
     "environment": ["earth", "world", "nature", "sustainable", "sharing", "sharing wealth", "greed", "renunciation"],
     "love": ["goodwill", "friend", "protect", "empathy", "care", "heart", "mother", "compassion"],
     "peace": ["calm", "mind", "intellect", "present", "trust", "silence", "purity"],
     "dharma": ["duty", "path", "living", "moral", "integrity", "righteousness"],
+<<<<<<< HEAD
+    "identity": ["self", "soul", "purpose", "path", "authenticity", "duty", "mind", "roles", "labels"],
+    "livelihood": ["job", "jobs", "work", "career", "needs", "need", "responsibility", "wealth", "burden", "choice", "randomly"],
+=======
+>>>>>>> origin/main
 }
 
 
@@ -71,7 +80,11 @@ def execute_hybrid_search(
         query_words = [
             w
             for w in re.sub(r"[^\w\s]", " ", query.lower()).split()
+<<<<<<< HEAD
+            if len(w) > 3 or w in {"job"}
+=======
             if len(w) > 3
+>>>>>>> origin/main
         ]
 
     for verse in corpus:
@@ -134,6 +147,10 @@ def rerank_candidates(candidates: list[dict[str, Any]], query: str, top_k: int =
 
 def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: int) -> list[dict[str, Any]]:
     query_terms = set(re.findall(r"\b\w+\b", query.lower()))
+<<<<<<< HEAD
+    expanded_query_terms = _expand_terms_with_concepts(query_terms)
+=======
+>>>>>>> origin/main
     reranked = []
     for item in candidates:
         verse = item["verse"]
@@ -142,7 +159,12 @@ def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: in
             f"{' '.join(str(keyword) for keyword in verse.get('keywords', []))}"
         ).lower()
         overlap = sum(1 for t in query_terms if len(t) > 3 and t in text)
+<<<<<<< HEAD
+        concept_overlap = sum(1 for t in expanded_query_terms - query_terms if len(t) > 3 and t in text)
+        bonus = min(18, overlap * 3 + concept_overlap * 3)
+=======
         bonus = overlap * 3
+>>>>>>> origin/main
         sort_score = item["score"] + bonus
         reranked.append(
             {
@@ -156,6 +178,19 @@ def _rerank_with_overlap(candidates: list[dict[str, Any]], query: str, top_k: in
     return [{k: v for k, v in item.items() if k != "_sortScore"} for item in reranked[:top_k]]
 
 
+<<<<<<< HEAD
+def _expand_terms_with_concepts(query_terms: set[str]) -> set[str]:
+    expanded = set(query_terms)
+    for term in query_terms:
+        for concept, related_terms in CONCEPT_CLOUDS.items():
+            if term == concept or term in related_terms:
+                expanded.add(concept)
+                expanded.update(related_terms)
+    return expanded
+
+
+=======
+>>>>>>> origin/main
 @lru_cache
 def _get_cross_encoder():
     settings = get_settings()

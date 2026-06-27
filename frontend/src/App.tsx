@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+<<<<<<< HEAD
+import { BookOpen, Leaf, LoaderCircle, Lock, LogOut, Shield, Sparkles } from "lucide-react";
+=======
 import { BookOpen, Leaf, Shield, Sparkles } from "lucide-react";
+>>>>>>> origin/main
 
 type Tab = "pathway" | "scriptures" | "eco";
 type LoadingAction = "interactive-guidance" | "guidance" | "compile-guidance" | "cancel-guidance" | null;
@@ -9,6 +13,10 @@ const SESSION_REFRESH_THRESHOLD_MS = 5 * 60_000;
 const SESSION_REFRESH_COOLDOWN_MS = 30_000;
 const STORED_CONVERSATION_HISTORY = 2;
 const PREVIOUS_CONVERSATION_LIMIT = 1;
+<<<<<<< HEAD
+const QUERY_CHARACTER_LIMIT = 4000;
+=======
+>>>>>>> origin/main
 
 interface ScriptureVerse {
   id: string;
@@ -26,7 +34,21 @@ interface AuditScores {
   scores: Record<string, number>;
   passed: boolean;
   rationale: string;
+<<<<<<< HEAD
+  minScore?: number;
+  llmJudgePassed?: boolean;
   failedDimensions?: string[];
+  groundedCitationIds?: string[];
+  groundingContract?: {
+    passed?: boolean;
+    failedChecks?: string[];
+    groundedCitationCount?: number;
+    citationCount?: number;
+    groundedCitationIds?: string[];
+  };
+=======
+  failedDimensions?: string[];
+>>>>>>> origin/main
   judgeModel?: string;
 }
 
@@ -42,6 +64,10 @@ interface CompressionMetrics {
 
 interface QueryResult {
   moralPathway?: string | null;
+<<<<<<< HEAD
+  guidanceReasons?: GuidanceReason[];
+=======
+>>>>>>> origin/main
   userMessage?: string;
   failureReason?: string;
   citations?: ScriptureVerse[];
@@ -65,6 +91,15 @@ interface QueryResult {
   rerankedCitations?: RetrievalCandidate[];
 }
 
+<<<<<<< HEAD
+interface GuidanceReason {
+  reason: string;
+  citation?: string;
+  groundedTerms?: string[];
+}
+
+=======
+>>>>>>> origin/main
 interface RetrievalCandidate {
   verse: ScriptureVerse;
   score?: number;
@@ -105,14 +140,25 @@ const GUIDANCE_LABELS: Record<string, string> = {
   "one-line summary": "One-line summary",
   summary: "One-line summary",
   reflection: "Reflection",
+<<<<<<< HEAD
+  judgment: "Judgement",
+  judgement: "Judgement",
+=======
   judgment: "Judgment",
   judgement: "Judgment",
+>>>>>>> origin/main
   "next step": "Next step",
   action: "Next step",
   "scripture grounding": "Scripture grounding",
   grounding: "Scripture grounding",
 };
+<<<<<<< HEAD
+const DETAIL_GUIDANCE_LABELS = new Set(["Reflection", "Judgement", "Next step", "Scripture grounding"]);
+const PROMPT_ECHO_LINE_RE =
+  /^(Dilemma:|Must stay focused on these user-topic words:|Tone mode:|Retrieved scriptures:|\d+\.\s*\[[^\]]+\]\s+.+|Write exactly these \d+ labeled sections\b|Use simple everyday words\b|Each title must be visible\b|Only make claims supported by\b|If a detail is not given\b|For one-word, fragmentary, or broad questions\b|For this business-integrity question\b|Do not (include markdown|assume the user|name specific commercial|invent facts|use markdown)\b|The Summary must clearly address\b|Avoid abstract filler\b|One-line summary:\s*answer the dilemma directly\b|Summary:\s*answer the dilemma directly\b|Reflection:\s*explain the feeling\b|Judgement:\s*say what choice\b|Judgment:\s*say what choice\b|Next step:\s*give one concrete\b|Scripture grounding:\s*write 2 plain sentences\b)/i;
+=======
 const DETAIL_GUIDANCE_LABELS = new Set(["Reflection", "Judgment", "Next step", "Scripture grounding"]);
+>>>>>>> origin/main
 
 function decodeBase64Url(value: string): string {
   const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
@@ -135,6 +181,11 @@ function getJwtExpiryMs(jwtToken: string | null): number | null {
 function resultStatusTitle(result?: QueryResult | null): string {
   const status = result?.status;
   const failedDimensions = result?.auditScores?.failedDimensions || [];
+<<<<<<< HEAD
+  if (status === "planner_unavailable") return "Guidance Planner Unavailable";
+  if (status === "synthesizer_unavailable") return "Guidance Synthesizer Unavailable";
+=======
+>>>>>>> origin/main
   if (status === "retrieval_unavailable") return "Scripture Retrieval Service Unavailable";
   if (status === "insufficient_context") return "No Relevant Scripture Context";
   if (status === "quality_threshold_not_met" && failedDimensions.includes("harmlessness")) return "Safety Review Required";
@@ -143,6 +194,14 @@ function resultStatusTitle(result?: QueryResult | null): string {
   return "Workflow Notice";
 }
 
+<<<<<<< HEAD
+function shouldShowWorkflowNotice(result?: QueryResult | null): boolean {
+  if (!result?.userMessage) return false;
+  return !["completed", "awaiting_approval", "awaiting_pre_synthesis_approval"].includes(result.status || "");
+}
+
+=======
+>>>>>>> origin/main
 function formatMetricValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "n/a";
   if (typeof value === "number") return Number.isInteger(value) ? value.toString() : value.toFixed(2);
@@ -150,6 +209,19 @@ function formatMetricValue(value: unknown): string {
   return String(value);
 }
 
+<<<<<<< HEAD
+function auditMinScore(audit?: AuditScores | null): number {
+  return audit?.minScore || 3;
+}
+
+function llmScoreCheckPassed(audit?: AuditScores | null): boolean {
+  if (!audit?.scores) return false;
+  const minScore = auditMinScore(audit);
+  return Object.values(audit.scores).every((score) => score >= minScore);
+}
+
+=======
+>>>>>>> origin/main
 function guidanceSections(pathway?: string | null): GuidanceSection[] {
   if (!pathway) return [];
   const cleaned = pathway
@@ -164,7 +236,11 @@ function guidanceSections(pathway?: string | null): GuidanceSection[] {
 
   const sections: GuidanceSection[] = [];
   let pendingLabel: string | null = null;
+<<<<<<< HEAD
+  const rawLines = cleaned
+=======
   const lines = cleaned
+>>>>>>> origin/main
     .replace(new RegExp(`\\b(${labelPattern})\\s*:\\s*`, "gi"), "\n$1: ")
     .replace(/\s+(?=\d+[.)]\s+)/g, "\n")
     .split(/\n+/)
@@ -174,6 +250,22 @@ function guidanceSections(pathway?: string | null): GuidanceSection[] {
         .trim(),
     )
     .filter(Boolean);
+<<<<<<< HEAD
+  const hasGuidanceLabel = rawLines.some((line) => {
+    const match = line.match(/^([A-Za-z][A-Za-z -]{1,32}):\s*(.*)$/);
+    return Boolean(match && GUIDANCE_LABELS[match[1].trim().toLowerCase()]);
+  });
+  let reachedGuidance = !hasGuidanceLabel;
+  const lines = rawLines.filter((line) => {
+    if (PROMPT_ECHO_LINE_RE.test(line)) return false;
+    const match = line.match(/^([A-Za-z][A-Za-z -]{1,32}):\s*(.*)$/);
+    const label = match ? GUIDANCE_LABELS[match[1].trim().toLowerCase()] : undefined;
+    if (!reachedGuidance && !label) return false;
+    if (label) reachedGuidance = true;
+    return true;
+  });
+=======
+>>>>>>> origin/main
 
   for (const line of lines) {
     const match = line.match(/^([A-Za-z][A-Za-z -]{1,32}):\s*(.*)$/);
@@ -232,6 +324,54 @@ function responseText(result?: QueryResult | null): string {
   return result?.moralPathway || result?.hitl?.draftPathway || result?.userMessage || result?.failureReason || "";
 }
 
+<<<<<<< HEAD
+function scriptureGroundingText(pathway?: string | null): string {
+  const section = guidanceSections(pathway).find((item) => item.label === "Scripture grounding");
+  return section?.text || "";
+}
+
+function citationLabel(citation: ScriptureVerse): string {
+  return `${citation.source} ${citation.chapter}:${citation.verse}`.replace(/\s+/g, " ").trim();
+}
+
+function citationMatchText(citation: ScriptureVerse): string[] {
+  return [
+    citation.id,
+    citation.source,
+    citation.faith,
+    citationLabel(citation),
+    `${citation.faith} ${citation.source}`,
+  ]
+    .map((value) => String(value || "").trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function usedCitationsForResult(result?: QueryResult | null): ScriptureVerse[] {
+  const citations = result?.citations || [];
+  if (citations.length === 0) return [];
+
+  // Prefer explicit grounding-contract IDs so the UI shows only citations used by the final answer.
+  const groundedIds = new Set([
+    ...(result?.auditScores?.groundingContract?.groundedCitationIds || []),
+    ...(result?.auditScores?.groundedCitationIds || []),
+  ].map((value) => String(value)));
+  if (groundedIds.size > 0) {
+    return citations.filter((citation) => groundedIds.has(String(citation.id)) || groundedIds.has(String(citation.source)));
+  }
+
+  const evidenceText = [
+    scriptureGroundingText(result?.moralPathway || result?.hitl?.draftPathway || ""),
+    ...(result?.guidanceReasons || []).map((item) => `${item.citation || ""} ${item.reason || ""}`),
+  ].join(" ").toLowerCase();
+
+  // Fallback for older responses without grounding IDs: infer usage from answer and reason text.
+  return citations.filter((citation) =>
+    citationMatchText(citation).some((value) => value.length >= 4 && evidenceText.includes(value)),
+  );
+}
+
+=======
+>>>>>>> origin/main
 function conversationHistoryKey(userEmail: string): string {
   return `anayaa_question_history:${userEmail}`;
 }
@@ -272,21 +412,58 @@ function scriptureSearchText(scripture: ScriptureVerse): string {
     .toLowerCase();
 }
 
+<<<<<<< HEAD
+function loadingMessage(action: LoadingAction): string {
+  if (action === "compile-guidance") return "Preparing guidance...";
+  if (action === "cancel-guidance") return "Cancelling review...";
+  return "Preparing guidance...";
+}
+
+function loadingDetail(action: LoadingAction): string {
+  if (action === "cancel-guidance") return "Closing this review and returning control to you.";
+  return "Local models can take a little time. You can keep this page open while Anayaa prepares the response.";
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return `${minutes}m ${remainder.toString().padStart(2, "0")}s`;
+}
+
+=======
+>>>>>>> origin/main
 export default function App() {
   const savedEmail = localStorage.getItem("anayaa_email") || "";
   const [token, setToken] = useState<string | null>(localStorage.getItem("anayaa_jwt"));
   const [email, setEmail] = useState(savedEmail);
   const [loginEmail, setLoginEmail] = useState("");
+<<<<<<< HEAD
+  const [loginPassword, setLoginPassword] = useState("");
+  const [authMode, setAuthMode] = useState<"login" | "reset">("login");
+  const [resetCode, setResetCode] = useState("");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("pathway");
   const [query, setQuery] = useState("");
   const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
+  const [loadingStartedAt, setLoadingStartedAt] = useState<number | null>(null);
+  const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
+=======
+  const [activeTab, setActiveTab] = useState<Tab>("pathway");
+  const [query, setQuery] = useState("");
+  const [loadingAction, setLoadingAction] = useState<LoadingAction>(null);
+>>>>>>> origin/main
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [questionHistory, setQuestionHistory] = useState<QuestionHistoryItem[]>(() => loadConversationHistory(savedEmail));
   const [scriptures, setScriptures] = useState<ScriptureVerse[]>([]);
   const [dailyEco, setDailyEco] = useState({ totalEnergyWh: 0, totalCo2Kg: 0, queryCount: 0 });
+<<<<<<< HEAD
+=======
   const [systemStatus, setSystemStatus] = useState<{ verseCount?: number; corpusSource?: string }>({});
+>>>>>>> origin/main
   const [showSessionWarning, setShowSessionWarning] = useState(false);
   const [secondsUntilExpiry, setSecondsUntilExpiry] = useState(0);
   const [refreshingSession, setRefreshingSession] = useState(false);
@@ -324,19 +501,30 @@ export default function App() {
     fetch("/api/system/scriptures", { headers: authHeaders() })
       .then((r) => r.json())
       .then((d) => setScriptures(d.scriptures || []));
+<<<<<<< HEAD
+=======
     fetch("/api/system/status", { headers: authHeaders() })
       .then((r) => r.json())
       .then(setSystemStatus);
+>>>>>>> origin/main
     fetchDailyEco(token);
   }, [token, authHeaders, fetchDailyEco]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+<<<<<<< HEAD
+    setResetMessage(null);
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+=======
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: loginEmail }),
+>>>>>>> origin/main
     });
     const data = await res.json();
     if (!res.ok) {
@@ -348,6 +536,10 @@ export default function App() {
     setToken(data.token);
     setEmail(data.email);
     setLoginEmail(data.email);
+<<<<<<< HEAD
+    setLoginPassword("");
+=======
+>>>>>>> origin/main
     setQuery("");
     setResult(null);
     setCurrentConversationId(null);
@@ -356,12 +548,60 @@ export default function App() {
     lastSessionRefreshMs.current = Date.now();
   };
 
+<<<<<<< HEAD
+  const handlePasswordResetRequest = async () => {
+    setError(null);
+    setResetMessage(null);
+    if (!loginEmail.trim()) {
+      setError("Enter your email first.");
+      return;
+    }
+    const res = await fetch("/api/auth/password-reset/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: loginEmail }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "Password reset failed");
+      return;
+    }
+    setResetMessage(data.message || "Reset code requested.");
+  };
+
+  const handlePasswordResetConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setResetMessage(null);
+    const res = await fetch("/api/auth/password-reset/confirm", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: loginEmail, resetCode, newPassword: resetPassword }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setError(data.detail || "Password reset failed");
+      return;
+    }
+    setLoginPassword(resetPassword);
+    setResetPassword("");
+    setResetCode("");
+    setAuthMode("login");
+    setResetMessage("Password updated. Sign in with the new password.");
+  };
+
+=======
+>>>>>>> origin/main
   const handleLogout = useCallback(() => {
     refreshPromiseRef.current = null;
     localStorage.removeItem("anayaa_jwt");
     localStorage.removeItem("anayaa_email");
     setToken(null);
     setEmail("");
+<<<<<<< HEAD
+    setLoginPassword("");
+=======
+>>>>>>> origin/main
     setQuery("");
     setResult(null);
     setCurrentConversationId(null);
@@ -511,6 +751,11 @@ export default function App() {
     if (!token || !query.trim()) return;
     const submittedQuestion = query.trim();
     setLoadingAction(preSynthesisVerification ? "interactive-guidance" : "guidance");
+<<<<<<< HEAD
+    setLoadingStartedAt(Date.now());
+    setLoadingElapsedSeconds(0);
+=======
+>>>>>>> origin/main
     setError(null);
     setResult(null);
     setCurrentConversationId(null);
@@ -548,6 +793,11 @@ export default function App() {
       setCurrentConversationId(recordConversation(submittedQuestion, response));
     } finally {
       setLoadingAction(null);
+<<<<<<< HEAD
+      setLoadingStartedAt(null);
+      setLoadingElapsedSeconds(0);
+=======
+>>>>>>> origin/main
     }
   };
 
@@ -560,14 +810,25 @@ export default function App() {
   };
 
   const toggleHitlVerse = (verseId: string) => {
+<<<<<<< HEAD
+    if (loadingAction) return;
+=======
+>>>>>>> origin/main
     setSelectedHitlVerseIds((ids) =>
       ids.includes(verseId) ? ids.filter((id) => id !== verseId) : [...ids, verseId]
     );
   };
 
   const handlePreSynthesisResume = async (decision: "approve" | "reject") => {
+<<<<<<< HEAD
+    if (loadingAction || !token || !result?.hitl?.workflowRunId) return;
+    setLoadingAction(decision === "approve" ? "compile-guidance" : "cancel-guidance");
+    setLoadingStartedAt(Date.now());
+    setLoadingElapsedSeconds(0);
+=======
     if (!token || !result?.hitl?.workflowRunId) return;
     setLoadingAction(decision === "approve" ? "compile-guidance" : "cancel-guidance");
+>>>>>>> origin/main
     setError(null);
     try {
       const activeToken = await refreshSession();
@@ -612,6 +873,11 @@ export default function App() {
       setError("Could not resume the workflow.");
     } finally {
       setLoadingAction(null);
+<<<<<<< HEAD
+      setLoadingStartedAt(null);
+      setLoadingElapsedSeconds(0);
+=======
+>>>>>>> origin/main
     }
   };
 
@@ -650,16 +916,42 @@ export default function App() {
     return item.id;
   };
 
+<<<<<<< HEAD
+  useEffect(() => {
+    if (!loadingAction || !loadingStartedAt) return;
+    const updateElapsed = () => {
+      setLoadingElapsedSeconds(Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000)));
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 1000);
+    return () => window.clearInterval(timer);
+  }, [loadingAction, loadingStartedAt]);
+
   const currentPathway = result?.moralPathway || result?.hitl?.draftPathway || "";
   const currentGuidanceSections = guidanceSections(currentPathway);
   const currentGuidanceDisplay = guidanceDisplay(currentGuidanceSections);
+  const usedCitations = usedCitationsForResult(result);
+=======
+  const currentPathway = result?.moralPathway || result?.hitl?.draftPathway || "";
+  const currentGuidanceSections = guidanceSections(currentPathway);
+  const currentGuidanceDisplay = guidanceDisplay(currentGuidanceSections);
+>>>>>>> origin/main
   const loading = loadingAction !== null;
   const previousConversations = questionHistory
     .filter((item) => item.id !== currentConversationId)
     .slice(0, PREVIOUS_CONVERSATION_LIMIT);
+<<<<<<< HEAD
+  const queryLocked = loading || Boolean(result);
+  // Once a response exists, users start a fresh dilemma instead of editing the submitted query.
+  const canSubmitQuery = query.trim().length > 0 && !result;
+  const canStartNextQuery = query.length > 0 || Boolean(result) || Boolean(error);
+  const isPreSynthesisApproval = result?.status === "awaiting_pre_synthesis_approval" && Boolean(result.hitl);
+  const hitlSessionLocked = isPreSynthesisApproval && loading;
+=======
   const canSubmitQuery = query.trim().length > 0 && !result;
   const canClearQuery = query.length > 0 || Boolean(result) || Boolean(error);
   const isPreSynthesisApproval = result?.status === "awaiting_pre_synthesis_approval" && Boolean(result.hitl);
+>>>>>>> origin/main
   const hitlCandidates = result?.hitl?.candidateScriptures || result?.rerankedCitations || [];
   const selectedManualScripture = scriptures.find((scripture) => scripture.id === selectedManualScriptureId) || null;
   const manualScriptureMatches = scriptures.filter((scripture) => {
@@ -671,6 +963,114 @@ export default function App() {
   if (!token) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
+<<<<<<< HEAD
+        <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
+          <h1 className="text-2xl italic mb-2">Anayaa.AI</h1>
+          <p className="mb-6 text-sm text-stone-500">Dharma-driven eco-conscious edge guidance</p>
+          <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+            Email
+          </label>
+          <input
+            id="login-email"
+            type="email"
+            required
+            value={loginEmail}
+            onChange={(e) => {
+              setLoginEmail(e.target.value);
+              setResetMessage(null);
+            }}
+            placeholder="your@email.com"
+            className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-4"
+          />
+          {authMode === "login" ? (
+            <>
+              <label htmlFor="login-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+                Password
+              </label>
+              <input
+                id="login-password"
+                type="password"
+                required
+                value={loginPassword}
+                onChange={(e) => {
+                  setLoginPassword(e.target.value);
+                  setResetMessage(null);
+                }}
+                placeholder="Enter password"
+                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-3"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("reset");
+                  setError(null);
+                  setResetMessage(null);
+                }}
+                className="mb-4 text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+              >
+                Forgot password?
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={handlePasswordResetRequest}
+                className="mb-4 w-full border border-[#5A5A40] text-[#5A5A40] rounded-xl py-3"
+              >
+                Request reset code
+              </button>
+              <label htmlFor="reset-code" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+                Reset code
+              </label>
+              <input
+                id="reset-code"
+                type="text"
+                required
+                value={resetCode}
+                onChange={(e) => setResetCode(e.target.value)}
+                placeholder="Enter code"
+                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-4"
+              />
+              <label htmlFor="reset-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+                New password
+              </label>
+              <input
+                id="reset-password"
+                type="password"
+                required
+                value={resetPassword}
+                onChange={(e) => setResetPassword(e.target.value)}
+                placeholder="Enter new password"
+                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-3"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  setAuthMode("login");
+                  setResetCode("");
+                  setResetPassword("");
+                  setError(null);
+                  setResetMessage(null);
+                }}
+                className="mb-4 text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+              >
+                Back to sign in
+              </button>
+            </>
+          )}
+          {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
+          {resetMessage && <p className="text-[#5A5A40] text-sm mb-3">{resetMessage}</p>}
+          <button type="submit" className="w-full bg-[#5A5A40] text-white rounded-xl py-3">
+            {authMode === "login" ? "Enter" : "Reset password"}
+          </button>
+          <div className="mt-6 border-t border-[#D9D2C5] pt-4">
+            <p className="flex items-center justify-center gap-2 text-xs text-stone-400">
+              <Lock className="h-3.5 w-3.5" />
+              100% Private Stdout Local Tunnel
+            </p>
+          </div>
+=======
         <form onSubmit={handleLogin} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
           <h1 className="text-2xl italic mb-2">Anayaa.AI</h1>
           <p className="text-sm text-stone-500 mb-6">Dharma-driven eco-conscious edge guidance</p>
@@ -686,6 +1086,7 @@ export default function App() {
           <button type="submit" className="w-full bg-[#5A5A40] text-white rounded-xl py-3">
             Enter Edge Node
           </button>
+>>>>>>> origin/main
         </form>
       </div>
     );
@@ -719,6 +1120,16 @@ export default function App() {
         </div>
       )}
       <aside className="w-72 bg-[#F5F2ED] border-r border-[#D9D2C5] p-6 flex flex-col">
+<<<<<<< HEAD
+        <div className="border-b border-[#D9D2C5] pb-5">
+          <h1 className="text-2xl font-semibold italic tracking-wide text-[#3F4A22] drop-shadow-sm">
+            Anayaa.AI
+          </h1>
+          <p className="mt-2 text-sm font-semibold leading-5 text-[#737A2E]">
+            Clear guidance, grounded in wisdom
+          </p>
+          <p className="mt-2 break-all font-mono text-[11px] text-stone-500">{email}</p>
+=======
         <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl italic text-[#5A5A40]">Anayaa.AI</h1>
@@ -727,6 +1138,7 @@ export default function App() {
           <button onClick={handleLogout} className="text-xs text-stone-500 underline">
             Log out
           </button>
+>>>>>>> origin/main
         </div>
         <nav className="mt-6 space-y-2">
           {(["pathway", "scriptures", "eco"] as Tab[]).map((tab) => (
@@ -741,6 +1153,16 @@ export default function App() {
             </button>
           ))}
         </nav>
+<<<<<<< HEAD
+        <button
+          onClick={handleLogout}
+          className="mt-4 flex items-center gap-2 px-3 py-2 text-sm font-bold text-[#6D7130] hover:text-[#4A4F1E]"
+        >
+          <LogOut className="h-4 w-4" />
+          Log out
+        </button>
+=======
+>>>>>>> origin/main
         <div className="mt-auto pt-4 border-t border-[#D9D2C5] text-xs space-y-1">
           <p className="flex items-center gap-1 font-bold uppercase text-stone-500">
             <Leaf className="w-3 h-3 text-emerald-600" /> CodeCarbon Audit
@@ -757,9 +1179,12 @@ export default function App() {
             <span>Queries</span>
             <span>{dailyEco.queryCount}</span>
           </div>
+<<<<<<< HEAD
+=======
           <p className="text-[10px] text-stone-400 mt-2">
             Corpus: {systemStatus.verseCount ?? "—"} verses (google_studio seed)
           </p>
+>>>>>>> origin/main
         </div>
       </aside>
 
@@ -778,6 +1203,25 @@ export default function App() {
                   id="dilemma-query"
                   value={query}
                   onChange={(e) => handleQueryChange(e.target.value)}
+<<<<<<< HEAD
+                  readOnly={queryLocked}
+                  maxLength={QUERY_CHARACTER_LIMIT}
+                  rows={4}
+                  placeholder="Example: I need to be honest with a close friend, but I am worried the truth will hurt them. How can I respond with compassion and integrity?"
+                  className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40] read-only:cursor-default read-only:text-stone-600"
+                />
+                <p className="mt-2 text-right font-mono text-[11px] text-stone-400">
+                  {query.length.toLocaleString()} / {QUERY_CHARACTER_LIMIT.toLocaleString()} characters
+                </p>
+                <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
+                  <button
+                    onClick={handleClearQuery}
+                    disabled={loading || !canStartNextQuery}
+                    className="text-sm font-bold text-[#5A5A40] underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline"
+                    aria-label="Start next dilemma"
+                  >
+                    Next dilemna
+=======
                   rows={4}
                   placeholder="Example: I need to be honest with a close friend, but I am worried the truth will hurt them. How can I respond with compassion and integrity?"
                   className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40]"
@@ -790,6 +1234,7 @@ export default function App() {
                     aria-label="Clear query"
                   >
                     Clear
+>>>>>>> origin/main
                   </button>
                   <button
                     onClick={() => handleQuery(true)}
@@ -797,7 +1242,11 @@ export default function App() {
                     className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Sparkles className="h-4 w-4" />
+<<<<<<< HEAD
+                    {loadingAction === "interactive-guidance" ? "Preparing..." : "The Interactive Guidance"}
+=======
                     {loadingAction === "interactive-guidance" ? "Processing..." : "The Interactive Guidance"}
+>>>>>>> origin/main
                   </button>
                   <button
                     onClick={() => handleQuery(false)}
@@ -805,12 +1254,47 @@ export default function App() {
                     className="flex items-center gap-2 rounded-xl bg-[#786D4B] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <Sparkles className="h-4 w-4" />
+<<<<<<< HEAD
+                    {loadingAction === "guidance" ? "Preparing..." : "The Guidance"}
+=======
                     {loadingAction === "guidance" ? "Processing..." : "The Guidance"}
+>>>>>>> origin/main
                   </button>
                 </div>
               </section>
               {error && <p className="text-red-600">{error}</p>}
 
+<<<<<<< HEAD
+              {loading && (
+                <section
+                  className="rounded-2xl border border-[#D9D2C5] bg-white p-5 shadow-sm"
+                  aria-live="polite"
+                  aria-busy="true"
+                >
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F5F2ED] text-[#5A5A40]">
+                        <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" />
+                      </span>
+                      <div>
+                        <h2 className="text-lg font-semibold text-stone-800">
+                          {loadingMessage(loadingAction)}
+                        </h2>
+                        <p className="mt-1 text-sm leading-6 text-stone-500">
+                          {loadingDetail(loadingAction)}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-3 py-2 text-right font-mono text-xs text-stone-500">
+                      <p className="font-bold uppercase tracking-wider text-[#5A5A40]">Elapsed</p>
+                      <p className="mt-1 text-sm text-stone-700">{formatElapsed(loadingElapsedSeconds)}</p>
+                    </div>
+                  </div>
+                </section>
+              )}
+
+=======
+>>>>>>> origin/main
               {result && (
                 <div className="space-y-5">
                   {isPreSynthesisApproval && (
@@ -830,7 +1314,12 @@ export default function App() {
                         id="hitl-concepts"
                         value={hitlConcepts}
                         onChange={(event) => setHitlConcepts(event.target.value)}
+<<<<<<< HEAD
+                        readOnly={hitlSessionLocked}
+                        className="mt-2 w-full rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-4 py-3 text-sm outline-none focus:border-[#5A5A40] read-only:cursor-default read-only:text-stone-600"
+=======
                         className="mt-2 w-full rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-4 py-3 text-sm outline-none focus:border-[#5A5A40]"
+>>>>>>> origin/main
                       />
 
                       <div className="mt-5">
@@ -847,6 +1336,10 @@ export default function App() {
                                 <input
                                   type="checkbox"
                                   checked={checked}
+<<<<<<< HEAD
+                                  disabled={hitlSessionLocked}
+=======
+>>>>>>> origin/main
                                   onChange={() => toggleHitlVerse(verse.id)}
                                   className="mt-1 h-4 w-4 accent-[#5A5A40]"
                                 />
@@ -875,16 +1368,32 @@ export default function App() {
                         </p>
                         <input
                           value={manualScriptureQuery}
+<<<<<<< HEAD
+                          onFocus={() => {
+                            if (!hitlSessionLocked) setShowManualScripturePicker(true);
+                          }}
+                          onChange={(event) => {
+                            if (hitlSessionLocked) return;
+=======
                           onFocus={() => setShowManualScripturePicker(true)}
                           onChange={(event) => {
+>>>>>>> origin/main
                             setManualScriptureQuery(event.target.value);
                             setSelectedManualScriptureId(null);
                             setShowManualScripturePicker(true);
                           }}
+<<<<<<< HEAD
+                          readOnly={hitlSessionLocked}
+                          placeholder="Type to select scripture by title,text or keywords"
+                          className="mt-3 w-full rounded-xl border-2 border-[#5A5A40] bg-white px-4 py-3 text-sm outline-none read-only:cursor-default read-only:text-stone-600"
+                        />
+                        {showManualScripturePicker && !hitlSessionLocked && (
+=======
                           placeholder="Type to select scripture by title,text or keywords"
                           className="mt-3 w-full rounded-xl border-2 border-[#5A5A40] bg-white px-4 py-3 text-sm outline-none"
                         />
                         {showManualScripturePicker && (
+>>>>>>> origin/main
                           <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-[#D9D2C5] bg-white shadow-sm">
                             {manualScriptureMatches.length > 0 ? (
                               manualScriptureMatches.map((scripture) => {
@@ -930,7 +1439,11 @@ export default function App() {
                           className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
                         >
                           <Sparkles className="h-4 w-4" />
+<<<<<<< HEAD
+                          {loadingAction === "compile-guidance" ? "Preparing..." : "Compile guidance"}
+=======
                           {loadingAction === "compile-guidance" ? "Compiling..." : "Compile guidance"}
+>>>>>>> origin/main
                         </button>
                         <button
                           onClick={() => handlePreSynthesisResume("reject")}
@@ -943,7 +1456,11 @@ export default function App() {
                     </section>
                   )}
 
+<<<<<<< HEAD
+                  {shouldShowWorkflowNotice(result) && (
+=======
                   {(["retrieval_unavailable", "insufficient_context", "quality_threshold_not_met"].includes(result.status || "")) && result.userMessage && (
+>>>>>>> origin/main
                     <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
                       <h3 className="mb-2 font-bold text-amber-900">
                         {resultStatusTitle(result)}
@@ -993,14 +1510,24 @@ export default function App() {
                         </div>
                       </div>
                     </section>
+<<<<<<< HEAD
+                )}
+
+                {!isPreSynthesisApproval && usedCitations.length > 0 && (
+=======
                   )}
 
                 {!isPreSynthesisApproval && result.citations && result.citations.length > 0 && (
+>>>>>>> origin/main
                   <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
                     <h3 className="font-bold mb-3 flex items-center gap-2">
                       <BookOpen className="w-4 h-4" /> Scripture Evidence
                     </h3>
+<<<<<<< HEAD
+                    {usedCitations.map((c) => (
+=======
                     {result.citations.map((c) => (
+>>>>>>> origin/main
                       <div key={c.id} className="mb-4 pb-4 border-b border-stone-100 last:border-0">
                         <p className="text-xs font-bold text-[#5A5A40]">
                           {c.faith} — {c.source} {c.chapter}:{c.verse}
@@ -1094,6 +1621,8 @@ export default function App() {
                   <span>CPU/GPU</span><span>{result.powerMetrics.cpuWatts}W / {result.powerMetrics.gpuWatts}W</span>
                   <span>Cache</span><span>{result.cacheHit ? "HIT" : "MISS"}</span>
                 </div>
+<<<<<<< HEAD
+=======
                 {result.ecoBreakdown && (
                   <table className="w-full mt-4 text-xs">
                     <thead><tr><th className="text-left">Stage</th><th>Wh</th><th>CO₂ kg</th></tr></thead>
@@ -1104,6 +1633,7 @@ export default function App() {
                     </tbody>
                   </table>
                 )}
+>>>>>>> origin/main
               </section>
             )}
 
@@ -1112,9 +1642,26 @@ export default function App() {
                 <h3 className="font-bold mb-2 flex items-center gap-2">
                   <Shield className="w-4 h-4" /> G-Eval Audit
                 </h3>
+<<<<<<< HEAD
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between gap-4 font-bold">
+                    <span>Final guidance status</span>
+                    <span className={result.auditScores.passed ? "text-emerald-700" : "text-amber-700"}>
+                      {result.auditScores.passed ? "PASSED" : "NEEDS REVIEW"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4">
+                    <span>LLM score check</span>
+                    <span className={llmScoreCheckPassed(result.auditScores) ? "text-emerald-700" : "text-amber-700"}>
+                      {llmScoreCheckPassed(result.auditScores) ? "PASSED" : "NEEDS REVIEW"}
+                    </span>
+                  </div>
+                </div>
+=======
                 <p className={`text-sm font-bold ${result.auditScores.passed ? "text-emerald-700" : "text-amber-700"}`}>
                   {result.auditScores.passed ? "PASSED" : "NEEDS REVIEW"}
                 </p>
+>>>>>>> origin/main
                 <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
                   {Object.entries(result.auditScores.scores).map(([k, v]) => (
                     <div key={k} className="flex justify-between"><span>{k}</span><span>{v}/5</span></div>

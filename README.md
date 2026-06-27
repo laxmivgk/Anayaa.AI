@@ -1,5 +1,49 @@
 # Anayaa.AI
 
+<<<<<<< HEAD
+Anayaa.AI is a local-first scripture-grounded guidance app for moral and life dilemmas. It accepts a user's question, sanitizes and rewrites the query when needed, retrieves scripture evidence through an MCP and Milvus boundary, generates guidance with local LLMs, audits the result for faithfulness and safety, and tracks request-level eco metrics.
+
+The project is built for local development without Docker.
+
+- Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
+- Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
+- Retrieval: scripture JSON corpus, sentence-transformer embeddings, Milvus hybrid search, graph expansion, reranking
+- Safety: sanitizer, regex firewall, PII scrubber, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
+- Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, local reset-code flow
+- Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
+
+## Current Experience
+
+The frontend has three main tabs.
+
+| Tab | Purpose |
+| --- | --- |
+| Active Pathway | Enter a dilemma and choose interactive or direct guidance |
+| Scripture Center | Browse the local scripture corpus |
+| Eco Audit | View daily energy, CO2, request metrics, and G-Eval audit status |
+
+In Active Pathway:
+
+1. The user logs in with an email address and password. A new email self-registers on first login, while existing emails must use their saved password.
+2. The user enters a dilemma in the query box.
+3. The user can choose `The Interactive Guidance` or `The Guidance`.
+4. `The Interactive Guidance` pauses before synthesis so the user can adjust concepts, select scripture candidates, or add a manual scripture. Clicking `Compile guidance` locks the interactive controls while the final guidance is generated.
+5. `The Guidance` runs the same pipeline directly without the pre-synthesis review pause.
+6. The query box shows a 4000-character limit. After an answer loads, the query box becomes read-only. The `Next dilemna` button starts the next query.
+7. The login page includes `Forgot password?`; local reset codes are printed to the backend terminal.
+8. The UI shows only user-facing guidance. Internal guidance validation details are not shown.
+9. Scripture Evidence shows only citations that were actually used in the final answer.
+
+The visible answer is organized around:
+
+- Summary
+- Reflection
+- Judgement
+- Next step
+- Scripture grounding
+- Scripture Evidence
+- Eco and audit metadata
+=======
 Anayaa.AI is a local-first moral guidance app. It accepts a user's dilemma, sanitizes and rewrites the query when needed, retrieves grounded scripture evidence through an MCP Milvus boundary, generates a concise local-LLM summary, audits the result for grounding and safety, and tracks per-request eco metrics.
 
 The project is built with:
@@ -40,12 +84,27 @@ In **Active Pathway**:
    - Scripture grounding
 
 ---
+>>>>>>> origin/main
 
 ## Architecture
 
 ```text
 React + Vite frontend
     |
+<<<<<<< HEAD
+    |  JWT-authenticated API calls
+    v
+FastAPI backend
+    |
+    |-- PostgreSQL users, JWT auth, Redis sessions, rate limits
+    |-- sanitizer -> regex firewall -> PII scrubber
+    |-- deterministic query rewrite
+    |-- LLM planner and bounded ReAct retrieval loop
+    |-- MCP retrieval client
+    |      |
+    |      v
+    |   MCP stdio retrieval server
+=======
     |  POST /api/query
     v
 FastAPI backend
@@ -59,10 +118,23 @@ FastAPI backend
     |      |
     |      v
     |   MCP stdio server
+>>>>>>> origin/main
     |      |-- milvus_hybrid_search
     |      |-- graph_expand
     |      |-- rerank_candidates_tool
     |      v
+<<<<<<< HEAD
+    |   Milvus Lite scripture_verses collection
+    |
+    |-- optional pre-synthesis human review
+    |-- Ollama synthesis with section-contract cleanup
+    |-- LLM judge and deterministic grounding contract
+    |-- PostgreSQL persistence
+    |-- Redis semantic cache and session state
+```
+
+Runtime retrieval goes through the MCP tool boundary. The FastAPI request path does not open `MilvusStore` directly for retrieval. The MCP client allowlists only:
+=======
     |   Milvus Lite / scripture_verses
     |
     |-- Ollama synthesis (required local LLM runtime)
@@ -72,11 +144,229 @@ FastAPI backend
 ```
 
 Important retrieval detail: the backend workflow calls `retrieve_via_mcp()`, and that function now runs retrieval through the MCP server boundary. The FastAPI/ADK side does **not** open `MilvusStore` directly for request retrieval. The MCP client allowlists only:
+>>>>>>> origin/main
 
 - `milvus_hybrid_search`
 - `graph_expand`
 - `rerank_candidates_tool`
 
+<<<<<<< HEAD
+This keeps scripture retrieval behind a clear tool boundary and makes retrieval behavior easier to audit.
+
+## Guidance Pipeline
+
+| Step | Component | What it does |
+| --- | --- | --- |
+| 0 | Query Rewriter | Normalizes malformed wording and frames fragments as moral questions |
+| 1 | Optimizer | Builds semantic cache keys and optional compressed prompts |
+| 2 | Planner | Extracts dilemma-specific concepts and tone hints with the selected LLM planner |
+| 3 | ReAct Reasoner | Runs bounded retrieval attempts when the first pass is weak; retry planning is LLM-driven and has no deterministic fallback |
+| 4 | MCP Retriever | Searches, graph-expands, and reranks scripture candidates |
+| 5 | Pre-Synthesis Review | Optional interactive pause before final synthesis |
+| 6 | Synthesizer | Generates the guidance from retrieved or selected citations and normalizes section labels into the UI contract |
+| 7 | Audit | Scores faithfulness, citation grounding, relevance, dharma alignment, harmlessness, and privacy |
+| 8 | Finalizer | Returns guidance, an approval checkpoint, or a user-facing quality message |
+
+For interactive compile, the judge evaluates the final answer against the rewritten dilemma plus the selected concepts. This matches the direct guidance path more closely than judging only against the concept list.
+
+Each API query is currently single-turn. The backend does not pass previous conversation context into retrieval or synthesis while multi-turn support is disabled.
+
+Planner and synthesizer failures are surfaced as explicit workflow statuses instead of silently falling back to deterministic answers. This keeps testing honest when a local model is unavailable, returns invalid JSON, or produces a draft that fails the guidance contract.
+
+## G-Eval Audit
+
+The G-Eval audit icon represents the automated quality gate for the generated guidance. A response must satisfy the configured minimum score across audit dimensions and pass the grounding contract before it is treated as complete guidance.
+
+The UI keeps this user-facing:
+
+- It can show whether the audit passed or needs review.
+- It can show LLM score checks in the audit area.
+- It does not show the internal Guidance validation block.
+
+## Repository Layout
+
+```text
+.
+|-- backend/
+|   |-- app/
+|   |   |-- agents/          # workflow, ADK orchestration, cache policy, pipeline messages
+|   |   |-- api/routes/      # auth, query, system, HITL resume, feedback, eco
+|   |   |-- auth/            # identity, JWT, password hashing, users, sessions
+|   |   |-- eco/             # request and daily eco metrics
+|   |   |-- hitl/            # pre-synthesis checkpoints
+|   |   |-- llm/             # local model routing, generation, prompt compression
+|   |   |-- mcp/             # retrieval MCP client and server
+|   |   |-- memory/          # PostgreSQL, Redis, Milvus helpers
+|   |   |-- observability/   # audit logger, G-Eval judge, grounding contract
+|   |   |-- retrieval/       # corpus, embeddings, hybrid search
+|   |   |-- security/        # sanitizer, firewall, privacy scrubber
+|   |   `-- main.py
+|   |-- data/                # local scripture and Milvus Lite data
+|   |-- scripts/             # backend utility scripts, user creation, retrieval seeding
+|   `-- tests/
+|-- frontend/
+|   |-- src/
+|   `-- package.json
+|-- infra/
+|   `-- init.sql
+|-- scripts/
+|   |-- setup-online.sh
+|   |-- setup_postgres.sh
+|   |-- start-backend.sh
+|   |-- start-frontend.sh
+|   |-- run-load-test.sh
+|   |-- pre-merge-checks.sh
+|   `-- free-resources.sh
+`-- README.md
+```
+
+## Prerequisites
+
+- Python 3.10+
+- Node.js 18+
+- PostgreSQL running locally
+- Redis running locally
+- Ollama installed locally
+- Enough disk space for local Python packages, embedding assets, Milvus Lite data, and Ollama models
+
+The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127.0.0.1:6379/0`, and Ollama at `http://127.0.0.1:11434` unless overridden in `backend/.env`.
+
+## Local Setup
+
+Run the one-time online setup first. Keep internet access on for this step because it installs dependencies, pulls local models, caches embedding assets, and seeds retrieval.
+
+```bash
+./scripts/setup_postgres.sh
+./scripts/setup-online.sh
+```
+
+Then start the app:
+
+```bash
+./scripts/start-backend.sh
+./scripts/start-frontend.sh
+```
+
+Open:
+
+- Frontend: `http://127.0.0.1:5173`
+- Backend docs: `http://localhost:8000/docs`
+- Health: `http://localhost:8000/api/health`
+- Deep health: `http://localhost:8000/api/health/deep`
+
+`scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000.
+
+The startup scripts expect these local Ollama models:
+
+- `gemma2:2b`
+- `qwen3:4b`
+- `llama3.2:3b`
+
+Current local model routing:
+
+| Task | Model |
+| --- | --- |
+| Lightweight classification | `gemma2:2b` |
+| Planner | `qwen3:4b` |
+| ReAct retry planner | `qwen3:4b` |
+| Synthesizer | `llama3.2:3b` |
+| G-Eval judge | `qwen3:4b` |
+
+When `GEMINI_API_KEY` is configured, planner and synthesizer routing can use the optional cloud path. Local-first development assumes the Ollama models above.
+
+## Environment
+
+The main local settings live in `backend/.env`.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `JWT_SECRET` | generated locally | Required JWT signing secret, at least 32 characters |
+| `JWT_EXP_MINUTES` | `15` | Access token lifetime |
+| `POSTGRES_ENABLED` | `true` | PostgreSQL is required |
+| `POSTGRES_HOST` | `127.0.0.1` | PostgreSQL host |
+| `POSTGRES_PORT` | `5432` | PostgreSQL port |
+| `POSTGRES_DB` | `anayaa` | PostgreSQL database |
+| `POSTGRES_USER` | `anayaa` | PostgreSQL user |
+| `POSTGRES_PASSWORD` | `anayaa_dev` | Local development password |
+| `REDIS_URL` | `redis://127.0.0.1:6379/0` | Sessions, rate limits, cache |
+| `MILVUS_ENABLED` | `true` | Milvus retrieval is required |
+| `ANAYAA_MILVUS_URI` | `data/milvus.db` | Milvus Lite path or standalone Milvus URI |
+| `MILVUS_COLLECTION` | `scripture_verses` | Vector collection name |
+| `OFFLINE_MODE` | `true` | Uses cached local assets after setup |
+| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Embedding model |
+| `CROSS_ENCODER_ENABLED` | `false` | Optional reranker toggle |
+| `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model |
+| `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama endpoint |
+| `GEMINI_API_KEY` | empty | Optional cloud routing for planner/synthesizer |
+| `HITL_ENABLED` | `true` | Enables interactive pre-synthesis checkpoints |
+| `RATE_LIMIT_PER_MINUTE` | `20` | Query rate limit |
+| `SESSION_REFRESH_RATE_LIMIT_PER_MINUTE` | `10` | Token refresh rate limit |
+| `LLMLINGUA_ENABLED` | `false` | Optional prompt compression toggle |
+| `LLMLINGUA_MODEL` | `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank` | Optional compression model |
+| `LLMLINGUA_COMPRESSION_RATE` | `0.5` | Optional prompt compression target |
+| `ADK_ENABLED` | `true` | Enables ADK workflow orchestration |
+| `RETRIEVAL_CONFIDENCE_THRESHOLD` | `40` | Minimum retrieval confidence target |
+| `AUDIT_MIN_SCORE` | `3` | Minimum audit score per dimension |
+| `REACT_LOOP_ENABLED` | `true` | Enables bounded retrieval retry behavior |
+| `REACT_MAX_TURNS` | `2` | Maximum ReAct retrieval turns |
+| `AGENT_TRACES_RETENTION_DAYS` | `30` | Local retention window for stored agent traces |
+| `REQUEST_ECO_METRICS_RETENTION_DAYS` | `90` | Local retention window for request eco metrics |
+| `AUDIT_LOGS_RETENTION_DAYS` | `90` | Local retention window for G-Eval audit logs |
+| `HITL_TERMINAL_RETENTION_DAYS` | `7` | Local retention window for completed HITL checkpoints |
+| `TURNS_RETENTION_DAYS` | `30` | Local retention window for stored query turns |
+| `RETENTION_CLEANUP_INTERVAL_SECONDS` | `86400` | Background cleanup cadence |
+
+Do not use `MILVUS_URI` in `.env`. Use `ANAYAA_MILVUS_URI`; the generic `MILVUS_URI` name can conflict with `pymilvus` global configuration.
+
+## Login Users
+
+Login users are stored in PostgreSQL. Passwords are never stored in `.env`; the database stores salted PBKDF2 password hashes.
+
+When a new email logs in for the first time, Anayaa creates that user with the password entered on the login screen. Later logins for that same email must use the saved password. This is local self-registration; no login credentials are stored in `.env`.
+
+If a user forgets their password, click `Forgot password?` on the login screen and request a reset code. The backend prints the one-time code to the local backend terminal; enter that code with a new password to update the account. Reset codes expire after 15 minutes and are stored only as hashes.
+
+You can also create or update a local login user from the terminal:
+
+```bash
+cd backend
+python scripts/create_user.py --email you@example.com
+```
+
+The script prompts for the password without echoing it in the terminal.
+
+## API Overview
+
+Authentication:
+
+- `POST /api/auth/login`
+- `POST /api/auth/password-reset/request`
+- `POST /api/auth/password-reset/confirm`
+- `POST /api/auth/refresh`
+
+Guidance:
+
+- `POST /api/query`
+- `POST /api/hitl/resume`
+- `POST /api/feedback`
+- `DELETE /api/feedback`
+- `DELETE /api/feedback/{request_id}`
+
+System and observability:
+
+- `GET /api/system/status`
+- `GET /api/system/scriptures`
+- `GET /api/system/streams`
+- `GET /api/eco/daily`
+- `GET /api/health`
+- `GET /api/health/deep`
+
+Example query request:
+
+```json
+{
+  "query": "How can I be disciplined?",
+=======
 This keeps database access behind the retrieval tool boundary and makes it easier to swap retrieval/model implementations later.
 
 ---
@@ -490,10 +780,51 @@ Content-Type: application/json
 
 {
   "query": "My friend lied to me. Should I forgive them?",
+>>>>>>> origin/main
   "preSynthesisVerification": true
 }
 ```
 
+<<<<<<< HEAD
+Use `preSynthesisVerification: true` for Interactive Guidance and `false` for direct Guidance.
+
+`POST /api/auth/login` self-registers unknown emails with the submitted password. Existing emails require the stored password. `POST /api/auth/password-reset/request` does not reveal whether an email exists; when it does, the reset code is printed to the local backend terminal.
+
+Important response fields include:
+
+- `status`
+- `originalQuery`
+- `rewrittenQuery`
+- `queryRewriteApplied`
+- `keywords`
+- `citations`
+- `moralPathway`
+- `auditScores`
+- `guidanceReasons`
+- `hitl`
+- `powerMetrics`
+- `transactionLog`
+- `cacheHit`
+
+Some fields are internal or diagnostic. The frontend intentionally hides validation details that are not useful to the end user.
+
+Common statuses:
+
+| Status | Meaning |
+| --- | --- |
+| `completed` | Guidance passed retrieval, synthesis, and audit |
+| `awaiting_pre_synthesis_approval` | Interactive Guidance paused before synthesis for concept/scripture review |
+| `awaiting_approval` | HITL approval checkpoint exists after synthesis |
+| `planner_unavailable` | The strategic planner LLM failed or returned invalid planner JSON |
+| `synthesizer_unavailable` | The synthesizer failed or produced a draft rejected by the guidance contract |
+| `retrieval_unavailable` | MCP/Milvus scripture retrieval failed operationally |
+| `insufficient_context` | Retrieval completed but did not find relevant scripture context |
+| `quality_threshold_not_met` | The generated guidance failed audit or grounding checks |
+
+## Verification
+
+Run the full local verification gate before merging:
+=======
 Multi-turn context is disabled for now. `/api/query` treats each request as standalone and does not use previous conversation context.
 
 `preSynthesisVerification` is optional and defaults to `true`. Set it to:
@@ -635,11 +966,25 @@ Full cleanup in one non-interactive command:
 ### Verification Commands
 
 Run the full pre-merge suite from the repo root:
+>>>>>>> origin/main
 
 ```bash
 ./scripts/pre-merge-checks.sh
 ```
 
+<<<<<<< HEAD
+That script runs:
+
+- Python compile checks for `backend/app` and `backend/tests`
+- Backend tests
+- Frontend production build
+
+Useful targeted checks while developing:
+
+```bash
+cd backend
+.venv/bin/python -m pytest tests/test_llm_strategic_planner.py tests/test_llm_react_retry_planner.py tests/test_guidance_section_contract.py tests/test_grounding_contract.py tests/test_guidance_reasons.py tests/test_hitl_compile_audit_query.py
+=======
 The same checks run in GitHub Actions for pull requests and pushes to `main` or `master`:
 
 - backend compile check
@@ -659,6 +1004,7 @@ Individual commands:
 cd backend
 .venv/bin/python -m compileall app tests
 .venv/bin/python -m pytest tests
+>>>>>>> origin/main
 ```
 
 ```bash
@@ -666,6 +1012,57 @@ cd frontend
 npm run build
 ```
 
+<<<<<<< HEAD
+## Local Operations
+
+Free common local development resources:
+
+```bash
+./scripts/free-resources.sh
+```
+
+Run load tests:
+
+```bash
+export ANAYAA_LOAD_TEST_EMAIL="codex.test@example.com"
+export ANAYAA_LOAD_TEST_PASSWORD="the-password-for-the-load-test-user"
+./scripts/run-load-test.sh
+```
+
+The load-test email self-registers if it does not already exist. If it already exists, the password must match or be reset first.
+
+Clean local generated runtime data:
+
+```bash
+./scripts/clean-local.sh
+```
+
+Review a single request path quickly by logging in, sending a query to `/api/query`, and checking:
+
+- `status`
+- `moralPathway`
+- `citations`
+- `auditScores`
+- `auditScores.groundingContract`
+- `cacheHit`
+
+## Production Notes
+
+The repository is configured for local development. Before production deployment, harden the following:
+
+- Store `JWT_SECRET` and database credentials in a secret manager.
+- Keep login passwords out of environment variables; store only password hashes or use a production auth provider.
+- Replace terminal-printed password reset codes with an email provider or managed auth flow before production use.
+- Use HTTPS only.
+- Replace localhost CORS with the deployed frontend origin.
+- Review browser token storage and cookie/session strategy.
+- Use managed or hardened PostgreSQL, Redis, and vector storage.
+- Disable development reload behavior.
+- Configure observability, backups, retention, and alerting.
+- Treat optional cloud LLM routing as a privacy-sensitive integration.
+
+Local defaults such as localhost CORS, generated dev secrets, and local JWT storage are development conveniences, not production security guidance.
+=======
 ---
 
 ## Development Notes
@@ -678,3 +1075,4 @@ npm run build
 - The current hot path should report `retrievalViaMcp: true` for real retrieval attempts.
 - Out-of-scope prompts should return guarded failures, not summaries.
 - After backend changes, restart FastAPI; the dev server will not always reload long-lived ADK/MCP state cleanly.
+>>>>>>> origin/main

@@ -11,7 +11,10 @@ milvus.db/
 anayaa
 
 backend/.env
+<<<<<<< HEAD
+=======
 backend/.env.example
+>>>>>>> origin/main
 backend/.venv/
 backend/anayaa/
 frontend/node_modules/

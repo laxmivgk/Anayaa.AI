@@ -8,4 +8,8 @@ if [[ ! -d node_modules ]]; then
   npm install
 fi
 
+<<<<<<< HEAD
+exec npm run dev -- --host 127.0.0.1
+=======
 exec npm run dev
+>>>>>>> origin/main

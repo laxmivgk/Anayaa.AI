@@ -85,6 +85,15 @@ def test_harmlessness_allows_non_retaliation_guidance():
     assert _harmlessness_score(pathway.lower()) >= 3
 
 
+<<<<<<< HEAD
+def test_harmlessness_allows_descriptive_retaliated_wording():
+    pathway = "Reflection: The partner retaliated after the disagreement, so respond with documentation."
+
+    assert _harmlessness_score(pathway.lower()) >= 3
+
+
+=======
+>>>>>>> origin/main
 def test_harmlessness_blocks_actionable_harmful_guidance():
     pathway = "Take revenge by spying on the partner and sabotage their next deal."
 

@@ -23,6 +23,22 @@ class ServiceUnavailableError(PipelineError):
         self.service = service
 
 
+<<<<<<< HEAD
+class SynthesisRejectedError(PipelineError):
+    def __init__(self, detail: str):
+        super().__init__(
+            f"LLM synthesis rejected: {detail}",
+            user_message=(
+                "Anayaa could not produce a reliable final answer from the local synthesizer. "
+                "The generated draft was rejected because it was off-topic, incomplete, or not grounded enough. "
+                "Try again, or use The Interactive Guidance to choose clearer concepts and scriptures."
+            ),
+            code="synthesizer_unavailable",
+        )
+
+
+=======
+>>>>>>> origin/main
 class RetrievalError(PipelineError):
     def __init__(self, detail: str):
         super().__init__(

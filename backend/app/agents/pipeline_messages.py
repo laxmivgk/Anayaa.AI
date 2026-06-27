@@ -16,11 +16,36 @@ def _failed_dimension_names(audit: dict[str, Any], min_score: int) -> list[str]:
     return failed
 
 
+<<<<<<< HEAD
+def _friendly_failure_areas(failed: list[str]) -> list[str]:
+    labels = {
+        "citation_grounding": "scripture grounding",
+        "context_grounding": "scripture grounding",
+        "grounding_contract": "scripture grounding",
+        "query_relevance": "question focus",
+        "dharma_alignment": "dharma alignment",
+        "faithfulness": "scripture faithfulness",
+        "harmlessness": "safety",
+        "privacy": "privacy",
+    }
+    areas: list[str] = []
+    for name in failed:
+        label = labels.get(name, name.replace("_", " "))
+        if label not in areas:
+            areas.append(label)
+    return areas
+
+
+def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
+    failed_raw = _failed_dimension_names(audit, min_score)
+    failed_display = _friendly_failure_areas(failed_raw)
+=======
 def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
     failed_raw = _failed_dimension_names(audit, min_score)
     failed_display = [name.replace("_", " ") for name in failed_raw]
     hints = audit.get("revision_hints") or []
     hint_text = f" {' '.join(hints)}" if hints else ""
+>>>>>>> origin/main
 
     if "harmlessness" in failed_raw:
         return (
@@ -35,6 +60,21 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
             "Anayaa generated a draft, but it cannot be shown as final guidance because the privacy review found "
             "possible exposure of personal identifiers. Human approval cannot override the privacy gate. "
             "Remove personal details, keep the dilemma general, and compile guidance again. "
+<<<<<<< HEAD
+            f"Areas needing improvement: {', '.join(failed_display) or 'privacy'}."
+        )
+
+    if "grounding_contract" in failed_raw or "citation_grounding" in failed_raw or "context_grounding" in failed_raw:
+        return (
+            "Anayaa drafted a response, but it could not verify enough support from the retrieved scripture passages "
+            "to show it as final guidance. Try adding a little more context about the situation, or use The Interactive "
+            "Guidance to choose scriptures that clearly connect to your dilemma, then compile guidance again."
+        )
+
+    return (
+        "Anayaa drafted a response, but it needs one more review before it can be shown as final guidance. "
+        f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}. "
+=======
             f"Areas needing improvement: {', '.join(failed_display) or 'privacy'}.{hint_text}"
         )
 
@@ -42,6 +82,7 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
         "A draft response was generated, but it did not meet the quality and faithfulness thresholds "
         f"for scripture-grounded guidance (minimum score {min_score}/5 on all audit dimensions). "
         f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}.{hint_text} "
+>>>>>>> origin/main
         "Use The Interactive Guidance to adjust concepts or scripture selections, then compile the guidance again."
     )
 
@@ -135,6 +176,88 @@ def build_retrieval_unavailable_response(
     }
 
 
+<<<<<<< HEAD
+def build_planner_unavailable_response(
+    *,
+    dilemma: str,
+    request_id: str,
+    optimizer: dict[str, Any],
+    eco_breakdown: list[dict[str, Any]],
+    power_metrics: dict[str, Any],
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "status": "planner_unavailable",
+        "userMessage": (
+            "The strategic planner is unavailable right now, so Anayaa cannot safely choose retrieval concepts "
+            "or continue to scripture grounding. Please check that the planner LLM is running and try again."
+        ),
+        "failureReason": "planner_service_unavailable",
+        "plannerError": detail,
+        "originalQuery": dilemma,
+        "compressedQuery": optimizer.get("compressedQuery"),
+        "compressionMetrics": optimizer.get("compressionMetrics"),
+        "keywords": [],
+        "plannerReasoning": None,
+        "historySummary": None,
+        "toneMsg": None,
+        "candidatesCount": 0,
+        "rerankedCitations": [],
+        "citations": [],
+        "moralPathway": None,
+        "confidence": 0,
+        "powerMetrics": power_metrics,
+        "ecoBreakdown": eco_breakdown,
+        "retrievalViaMcp": False,
+        "hybridSource": None,
+        "orchestrator": "google-adk",
+        "pipeline": "Google ADK Workflow + MCP Milvus Retrieval",
+        "requestId": request_id,
+    }
+
+
+def build_synthesizer_unavailable_response(
+    *,
+    payload: dict[str, Any],
+    request_id: str,
+    eco_breakdown: list[dict[str, Any]],
+    power_metrics: dict[str, Any],
+    detail: str,
+    user_message: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": "synthesizer_unavailable",
+        "userMessage": user_message or (
+            "The guidance synthesizer could not produce a reliable final answer right now. "
+            "No fallback answer was shown. Please try again, or use The Interactive Guidance to choose clearer concepts and scriptures."
+        ),
+        "failureReason": "synthesizer_service_unavailable",
+        "synthesizerError": detail,
+        "originalQuery": payload.get("originalQuery") or payload.get("dilemma"),
+        "rewrittenQuery": payload.get("rewrittenQuery"),
+        "compressedQuery": payload.get("compressedQuery"),
+        "compressionMetrics": payload.get("compressionMetrics"),
+        "keywords": payload.get("keywords", []),
+        "plannerReasoning": payload.get("reasoning"),
+        "historySummary": payload.get("historySummary"),
+        "toneMsg": payload.get("toneMsg"),
+        "candidatesCount": payload.get("candidatesCount", 0),
+        "rerankedCitations": payload.get("rerankedCitations", []),
+        "citations": payload.get("citations", []),
+        "moralPathway": None,
+        "confidence": payload.get("confidence", 0),
+        "powerMetrics": power_metrics,
+        "ecoBreakdown": eco_breakdown,
+        "retrievalViaMcp": payload.get("retrievalViaMcp", False),
+        "hybridSource": payload.get("hybridSource"),
+        "orchestrator": "google-adk",
+        "pipeline": "Google ADK Workflow + MCP Milvus Retrieval",
+        "requestId": request_id,
+    }
+
+
+=======
+>>>>>>> origin/main
 def build_quality_failure_response(
     *,
     payload: dict[str, Any],

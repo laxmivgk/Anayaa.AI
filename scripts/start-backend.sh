@@ -27,6 +27,41 @@ migrate_env() {
     fi
     log "Removed MILVUS_URI from .env (conflicts with pymilvus — use ANAYAA_MILVUS_URI)"
   fi
+<<<<<<< HEAD
+
+  if ! grep -q '^OFFLINE_MODE=' "$env_file"; then
+    printf '\nOFFLINE_MODE=true\n' >> "$env_file"
+    log "Added OFFLINE_MODE=true to backend/.env"
+  fi
+
+  if grep -q '^OLLAMA_BASE_URL=http://localhost:11434$' "$env_file"; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' 's|^OLLAMA_BASE_URL=http://localhost:11434$|OLLAMA_BASE_URL=http://127.0.0.1:11434|' "$env_file"
+    else
+      sed -i 's|^OLLAMA_BASE_URL=http://localhost:11434$|OLLAMA_BASE_URL=http://127.0.0.1:11434|' "$env_file"
+    fi
+    log "Updated OLLAMA_BASE_URL to 127.0.0.1 for offline local use"
+  fi
+
+  if grep -q '^REDIS_URL=redis://localhost:6379/0$' "$env_file"; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' 's|^REDIS_URL=redis://localhost:6379/0$|REDIS_URL=redis://127.0.0.1:6379/0|' "$env_file"
+    else
+      sed -i 's|^REDIS_URL=redis://localhost:6379/0$|REDIS_URL=redis://127.0.0.1:6379/0|' "$env_file"
+    fi
+    log "Updated REDIS_URL to 127.0.0.1 for offline local use"
+  fi
+
+  if grep -q '^POSTGRES_HOST=localhost$' "$env_file"; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' 's|^POSTGRES_HOST=localhost$|POSTGRES_HOST=127.0.0.1|' "$env_file"
+    else
+      sed -i 's|^POSTGRES_HOST=localhost$|POSTGRES_HOST=127.0.0.1|' "$env_file"
+    fi
+    log "Updated POSTGRES_HOST to 127.0.0.1 for offline local use"
+  fi
+=======
+>>>>>>> origin/main
 }
 
 ensure_jwt_secret() {
@@ -88,8 +123,13 @@ load_env() {
 }
 
 ensure_ollama() {
+<<<<<<< HEAD
+  local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+  local models=(gemma2:2b qwen3:4b llama3.2:3b)
+=======
   local base_url="${OLLAMA_BASE_URL:-http://localhost:11434}"
   local models=(gemma2:2b llama3.1:8b llama3.2:3b)
+>>>>>>> origin/main
 
   if ! command -v ollama >/dev/null 2>&1; then
     warn "Ollama is not installed. Install from https://ollama.com then re-run this script."
@@ -123,7 +163,11 @@ ensure_ollama() {
 }
 
 ensure_postgres() {
+<<<<<<< HEAD
+  local host="${POSTGRES_HOST:-127.0.0.1}"
+=======
   local host="${POSTGRES_HOST:-localhost}"
+>>>>>>> origin/main
   local port="${POSTGRES_PORT:-5432}"
   if pg_isready -h "$host" -p "$port" >/dev/null 2>&1; then
     log "PostgreSQL is running at ${host}:${port}"
@@ -135,7 +179,11 @@ ensure_postgres() {
 }
 
 ensure_redis() {
+<<<<<<< HEAD
+  local url="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+=======
   local url="${REDIS_URL:-redis://localhost:6379/0}"
+>>>>>>> origin/main
   if python - "$url" <<'PY'
 import sys
 from urllib.parse import urlparse
@@ -143,7 +191,11 @@ import redis
 
 url = sys.argv[1]
 parsed = urlparse(url)
+<<<<<<< HEAD
+client = redis.Redis(host=parsed.hostname or "127.0.0.1", port=parsed.port or 6379, db=int((parsed.path or "/0").lstrip("/") or 0))
+=======
 client = redis.Redis(host=parsed.hostname or "localhost", port=parsed.port or 6379, db=int((parsed.path or "/0").lstrip("/") or 0))
+>>>>>>> origin/main
 client.ping()
 PY
   then
