@@ -1,5 +1,21 @@
 import json
 import logging
+import json
+import logging
+import re
+from typing import Any
+
+import httpx
+
+from app.agents.cache_policy import build_semantic_cache_key, cache_versions
+from app.agents.pipeline_errors import ServiceUnavailableError
+from app.config import get_settings
+from app.llm.prompt_compressor import compress_query_prompt
+from app.llm.router import select_model
+from app.memory.redis_cache import RedisCache
+
+logger = logging.getLogger(__name__)
+
 import re
 from typing import Any
 
@@ -27,6 +43,8 @@ REWRITE_REPLACEMENTS = {
     r"\bmsg\b": "message",
     r"\btmrw\b": "tomorrow",
     r"\bbcoz\b": "because",
+    r"\bdrops+h+ipping\b": "dropshipping",
+    r"\bscaming\b": "scamming",
     r"\bdrops+h+ipping\b": "dropshipping",
     r"\bscaming\b": "scamming",
 }
@@ -92,6 +110,7 @@ PLANNER_PRIORITY_TERMS = {
     "compassion",
     "conflict",
     "dropshipping",
+    "dropshipping",
     "duty",
     "financial",
     "financially",
@@ -130,6 +149,7 @@ MORAL_REWRITE_TERMS = {
     "betray",
     "cheat",
     "conflict",
+    "dropshipping",
     "dropshipping",
     "forgive",
     "friend",
@@ -212,6 +232,159 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
 
 
 def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
+def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
+    followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
+    strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
+    stats = {"total": len(records), "followed": followed, "strayed": strayed}
+    if not records:
+        return "No past feedback rows found. Initializing blank concierge path.", "", stats
+    tone_msg = ""
+    if strayed > 0:
+        tone_msg = "Compassionate Re-Alignment Mode Activated"
+    elif followed > 0:
+        tone_msg = "Steadfast Devotion Mode Activated"
+    return (
+        f"Found {len(records)} total interactive feedback entries: {followed} followed dharma matches, {strayed} strayed boundaries.",
+        tone_msg,
+        stats,
+    )
+
+
+def _build_planner_messages(
+    dilemma: str,
+    optimized_query: str,
+    history_summary: str,
+    tone_msg: str,
+    feedback_stats: dict[str, int],
+) -> list[dict[str, str]]:
+    candidate_terms = _planner_candidate_terms(dilemma, optimized_query)
+    compact_dilemma = _short_context_text(dilemma, max_chars=360)
+    compact_query = _short_context_text(optimized_query, max_chars=220)
+    user_content = (
+        "Task: choose scripture retrieval keywords for Anayaa's next retrieval step.\n"
+        f"Dilemma: {compact_dilemma}\n"
+        f"Optimized query: {compact_query}\n"
+        f"Candidate terms: {', '.join(candidate_terms)}\n"
+        f"Feedback stats: total={feedback_stats.get('total', 0)}, followed={feedback_stats.get('followed', 0)}, strayed={feedback_stats.get('strayed', 0)}.\n"
+        f"Existing tone label: {tone_msg or 'none'}.\n"
+        f"History note: {_short_context_text(history_summary, max_chars=120)}\n"
+        "Output only the planner JSON object now."
+    )
+    return [
+        {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
+        {"role": "user", "content": user_content},
+    ]
+
+
+def _planner_candidate_terms(dilemma: str, optimized_query: str) -> list[str]:
+    text = f"{optimized_query} {dilemma}"
+    candidates = _extract_planner_keywords(text, limit=10)
+    lower = text.lower()
+    if any(term in lower for term in ["lie", "lied", "lying", "truth"]):
+        candidates.extend(["honesty", "truth"])
+    if any(term in lower for term in ["anxiety", "stressed", "stress"]):
+        candidates.extend(["compassion", "protection"])
+    if any(term in lower for term in ["discipline", "disciplined"]):
+        candidates.extend(["discipline", "self-control", "duty"])
+    return list(dict.fromkeys(term for term in candidates if term not in PLANNER_STOPWORDS))[:12]
+
+
+def _extract_json_object(raw: str) -> dict[str, Any]:
+    # Small local planner models sometimes wrap JSON in prose or fences; keep only the object.
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
+        text = re.sub(r"\s*```$", "", text).strip()
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        parsed = json.loads(text[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("Planner response JSON must be an object")
+    return parsed
+
+
+def _normalize_planner_keywords(value: Any) -> list[str]:
+    keywords: list[str] = []
+    if isinstance(value, list):
+        for item in value:
+            for term in re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", str(item).lower()):
+                if term not in PLANNER_STOPWORDS and term not in keywords:
+                    keywords.append(term)
+    if not keywords:
+        raise ValueError("Planner response must include at least one retrieval keyword")
+    return keywords[:6]
+
+
+def _parse_llm_planner_response(
+    raw: str,
+    *,
+    model: str,
+    history_summary: str = "",
+    tone_msg: str = "",
+) -> dict[str, Any]:
+    parsed = _extract_json_object(raw)
+    keywords = _normalize_planner_keywords(parsed.get("keywords"))
+    parsed_tone = re.sub(r"\s+", " ", str(parsed.get("toneMsg") or "")).strip()
+    selected_tone = parsed_tone or tone_msg
+    reasoning = f"Search scripture using: {', '.join(keywords)}."
+    return {
+        "keywords": keywords,
+        "reasoning": reasoning[:160],
+        "historySummary": history_summary[:160],
+        "toneMsg": selected_tone[:80],
+        "plannerEngine": "Ollama LLM",
+        "plannerModel": model,
+    }
+
+
+async def run_strategic_planner(
+    dilemma: str,
+    user_email: str,
+    pg,
+    *,
+    optimized_query: str | None = None,
+) -> dict[str, Any]:
+    records = [r for r in await load_feedback_records(pg) if r.get("user_email") == user_email]
+    history_summary, tone_msg, feedback_stats = _planner_feedback_summary(records)
+    settings = get_settings()
+    model = select_model("planner")
+    try:
+        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=45.0) as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "model": model,
+                    "messages": _build_planner_messages(
+                        dilemma,
+                        optimized_query or dilemma,
+                        history_summary,
+                        tone_msg,
+                        feedback_stats,
+                    ),
+                    "format": "json",
+                    "stream": False,
+                    "think": False,
+                    "keep_alive": "30m",
+                    "options": {"temperature": 0.0, "num_predict": 160, "num_ctx": 2048},
+                },
+            )
+            response.raise_for_status()
+            raw = (response.json().get("message") or {}).get("content", "")
+            return _parse_llm_planner_response(
+                raw,
+                model=model,
+                history_summary=history_summary,
+                tone_msg=tone_msg,
+            )
+    except httpx.HTTPError as exc:
+        raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
+    except ValueError as exc:
+        raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
     followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
     strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
     stats = {"total": len(records), "followed": followed, "strayed": strayed}
@@ -493,12 +666,15 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
     compressed_query = compression.compressed_prompt or dilemma
     sub_queries = _build_sub_queries(dilemma, compressed_query)
     cache_key, versions = build_semantic_cache_key(dilemma, keywords)
+    cache_key, versions = build_semantic_cache_key(dilemma, keywords)
     return {
         "subQueries": sub_queries,
         "multiQueryEnabled": len(sub_queries) > 1,
         "compressedQuery": compressed_query,
         "originalQuery": dilemma,
         "compressionMetrics": compression.to_dict(),
+        "cacheKey": cache_key,
+        "cacheVersions": versions,
         "cacheKey": cache_key,
         "cacheVersions": versions,
         "faithFilters": [],

@@ -10,6 +10,12 @@ def select_model(task: str) -> str:
         "classifier": "gemma2:2b",
         "optimizer": "qwen3:4b",
         "planner": "qwen3:4b",
+        "optimizer": "qwen3:4b",
+        "planner": "qwen3:4b",
+        "synthesizer": "llama3.2:3b",
+        "judge": "qwen3:4b",
+    }
+    return routing.get(task, "qwen3:4b")
         "synthesizer": "llama3.2:3b",
         "judge": "qwen3:4b",
     }

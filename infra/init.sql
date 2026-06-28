@@ -136,8 +136,10 @@ CREATE INDEX IF NOT EXISTS idx_eco_daily ON daily_eco_rollups(rollup_date, user_
 CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_request_eco_metrics_created_at ON request_eco_metrics(created_at);
 CREATE INDEX IF NOT EXISTS idx_agent_traces_created_at ON agent_traces(created_at);
+CREATE INDEX IF NOT EXISTS idx_agent_traces_created_at ON agent_traces(created_at);
 CREATE INDEX IF NOT EXISTS idx_hitl_checkpoints_terminal_retention
     ON hitl_checkpoints(status, resumed_at, created_at);
 CREATE INDEX IF NOT EXISTS idx_turns_created_at ON turns(created_at);
 CREATE INDEX IF NOT EXISTS idx_feedback_records_user_email ON feedback_records(user_email);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
