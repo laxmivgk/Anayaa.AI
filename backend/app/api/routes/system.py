@@ -3,10 +3,8 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import require_auth
-<<<<<<< HEAD
 from app.agents.pipeline_errors import PipelineError
-=======
->>>>>>> origin/main
+from app.agents.pipeline_errors import PipelineError
 from app.agents.pipeline_messages import build_quality_failure_user_message
 from app.eco.aggregator import get_daily_rollup
 from app.hitl.checkpoints import resume_checkpoint
@@ -15,15 +13,12 @@ from app.memory.postgres import PostgresPool
 from app.memory.streams import get_transaction_streams
 from app.observability.audit_logger import persist_audit_log
 from app.observability.g_eval_judge import run_g_eval_judge
-<<<<<<< HEAD
 from app.observability.guidance_reasons import build_guidance_reasons
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
 from app.security.harm_normalizer import normalize_harmful_concepts, normalize_harmful_framing_text
-=======
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
->>>>>>> origin/main
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -35,11 +30,8 @@ async def system_status(request: Request):
     redis = request.app.state.redis
     health = await check_health(pg, redis, getattr(request.app.state, "milvus_status", None))
     return {
-<<<<<<< HEAD
         "quantizedModel": "qwen3:4b-local",
-=======
-        "quantizedModel": "llama3.2:3b-local",
->>>>>>> origin/main
+        "quantizedModel": "qwen3:4b-local",
         "speculativeDraftModel": "gemma2:2b-local",
         "acceleration": "Local Apple Silicon / NPU Node",
         "redisCacheSize": "active" if health.get("redis") else "unavailable",
@@ -142,7 +134,6 @@ def _approved_pre_synthesis_citations(payload: dict, body: HitlBody) -> list[dic
     return deduped[:4]
 
 
-<<<<<<< HEAD
 def _hitl_compile_audit_query(dilemma: str, concepts: list[str]) -> str:
     """Judge interactive compile against the user's dilemma plus selected focus terms."""
     safe_dilemma = normalize_harmful_framing_text(dilemma)
@@ -158,8 +149,6 @@ def _hitl_compile_audit_query(dilemma: str, concepts: list[str]) -> str:
     return f"{safe_dilemma} Selected concepts: {', '.join(focus_terms)}"
 
 
-=======
->>>>>>> origin/main
 @router.post("/hitl/resume")
 async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_auth)):
     pg: PostgresPool = request.app.state.pg
@@ -175,7 +164,6 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         if not citations:
             raise HTTPException(status_code=400, detail="Select at least one scripture or add a manual verse.")
 
-<<<<<<< HEAD
         concept_source = body.concepts if body.concepts is not None else (
             hitl.get("proposedKeywords") or payload.get("keywords") or []
         )
@@ -218,16 +206,6 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         # Judge compiled HITL guidance against the user's dilemma, with selected concepts as extra focus.
         audit_query = _hitl_compile_audit_query(dilemma, concepts)
         audit = await run_g_eval_judge(audit_query, citations, pathway)
-=======
-        concepts = [
-            str(concept).strip().lower()
-            for concept in (body.concepts or hitl.get("proposedKeywords") or payload.get("keywords") or [])
-            if str(concept).strip()
-        ][:8]
-        dilemma = payload.get("rewrittenQuery") or payload.get("originalQuery") or ""
-        pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
-        audit = run_g_eval_judge(dilemma, citations, pathway)
->>>>>>> origin/main
         await persist_audit_log(pg, payload.get("requestId") or body.workflowRunId, audit)
 
         result = {
@@ -239,10 +217,8 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
             "keywords": concepts or payload.get("keywords", []),
             "citations": citations,
             "moralPathway": pathway if audit.get("passed") else None,
-<<<<<<< HEAD
             "guidanceReasons": build_guidance_reasons(dilemma, citations, pathway, audit) if audit.get("passed") else [],
-=======
->>>>>>> origin/main
+            "guidanceReasons": build_guidance_reasons(dilemma, citations, pathway, audit) if audit.get("passed") else [],
             "hitl": {
                 **hitl,
                 "approvedConcepts": concepts,

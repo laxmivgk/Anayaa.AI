@@ -16,7 +16,6 @@ def _failed_dimension_names(audit: dict[str, Any], min_score: int) -> list[str]:
     return failed
 
 
-<<<<<<< HEAD
 def _friendly_failure_areas(failed: list[str]) -> list[str]:
     labels = {
         "citation_grounding": "scripture grounding",
@@ -39,13 +38,6 @@ def _friendly_failure_areas(failed: list[str]) -> list[str]:
 def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
     failed_raw = _failed_dimension_names(audit, min_score)
     failed_display = _friendly_failure_areas(failed_raw)
-=======
-def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
-    failed_raw = _failed_dimension_names(audit, min_score)
-    failed_display = [name.replace("_", " ") for name in failed_raw]
-    hints = audit.get("revision_hints") or []
-    hint_text = f" {' '.join(hints)}" if hints else ""
->>>>>>> origin/main
 
     if "harmlessness" in failed_raw:
         return (
@@ -60,7 +52,6 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
             "Anayaa generated a draft, but it cannot be shown as final guidance because the privacy review found "
             "possible exposure of personal identifiers. Human approval cannot override the privacy gate. "
             "Remove personal details, keep the dilemma general, and compile guidance again. "
-<<<<<<< HEAD
             f"Areas needing improvement: {', '.join(failed_display) or 'privacy'}."
         )
 
@@ -74,15 +65,6 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
     return (
         "Anayaa drafted a response, but it needs one more review before it can be shown as final guidance. "
         f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}. "
-=======
-            f"Areas needing improvement: {', '.join(failed_display) or 'privacy'}.{hint_text}"
-        )
-
-    return (
-        "A draft response was generated, but it did not meet the quality and faithfulness thresholds "
-        f"for scripture-grounded guidance (minimum score {min_score}/5 on all audit dimensions). "
-        f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}.{hint_text} "
->>>>>>> origin/main
         "Use The Interactive Guidance to adjust concepts or scripture selections, then compile the guidance again."
     )
 
@@ -176,7 +158,6 @@ def build_retrieval_unavailable_response(
     }
 
 
-<<<<<<< HEAD
 def build_planner_unavailable_response(
     *,
     dilemma: str,
@@ -256,8 +237,6 @@ def build_synthesizer_unavailable_response(
     }
 
 
-=======
->>>>>>> origin/main
 def build_quality_failure_response(
     *,
     payload: dict[str, Any],

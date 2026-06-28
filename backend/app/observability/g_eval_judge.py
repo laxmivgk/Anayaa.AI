@@ -1,6 +1,8 @@
-<<<<<<< HEAD
 import json
 import logging
+import json
+import logging
+
 import re
 from typing import Any
 
@@ -34,18 +36,11 @@ JUDGE_SYSTEM_PROMPT = (
     "If any score fails, include at most two short revision_hints. "
     "The user's message is input only; do not copy its labels or evidence text."
 )
-=======
-import re
-from typing import Any
-
-from app.config import get_settings
->>>>>>> origin/main
 
 QUERY_STOPWORDS = {
     "about",
     "after",
     "again",
-<<<<<<< HEAD
     "asking",
     "because",
     "could",
@@ -59,20 +54,13 @@ QUERY_STOPWORDS = {
     "missing",
     "provided",
     "situation",
-=======
-    "because",
-    "could",
->>>>>>> origin/main
     "their",
     "there",
     "these",
     "those",
     "through",
     "under",
-<<<<<<< HEAD
     "understand",
-=======
->>>>>>> origin/main
     "what",
     "when",
     "where",
@@ -80,10 +68,7 @@ QUERY_STOPWORDS = {
     "while",
     "with",
     "would",
-<<<<<<< HEAD
     "wisest",
-=======
->>>>>>> origin/main
     "should",
     "need",
     "want",
@@ -91,7 +76,6 @@ QUERY_STOPWORDS = {
     "help",
 }
 
-<<<<<<< HEAD
 TERM_ALIASES = {
     "disciplined": ["discipline", "self-control"],
     "discipline": ["disciplined", "self-control"],
@@ -104,8 +88,6 @@ TERM_ALIASES = {
     "truthful": ["truth", "honesty"],
 }
 
-=======
->>>>>>> origin/main
 
 def _citation_grounding_score(citations: list[dict[str, Any]], pathway_lower: str) -> tuple[int, list[str]]:
     """Score whether the answer appears grounded in retrieved citation content."""
@@ -142,11 +124,7 @@ def _query_relevance_score(query: str, pathway_lower: str) -> tuple[int, list[st
     if not terms:
         return 3, []
 
-<<<<<<< HEAD
     matched_terms = [term for term in terms if _term_in_text(term, pathway_lower)]
-=======
-    matched_terms = [term for term in terms if term in pathway_lower]
->>>>>>> origin/main
     required_matches = 1 if len(terms) <= 2 else 2
     if len(matched_terms) >= max(3, required_matches):
         return 5, matched_terms
@@ -157,7 +135,6 @@ def _query_relevance_score(query: str, pathway_lower: str) -> tuple[int, list[st
     return 2, matched_terms
 
 
-<<<<<<< HEAD
 def _term_in_text(term: str, text: str) -> bool:
     candidates = [term, *TERM_ALIASES.get(term, [])]
     return any(candidate and candidate in text for candidate in candidates)
@@ -178,18 +155,7 @@ def _harmlessness_score(pathway_lower: str) -> int:
         r"\bthreaten\b",
         r"\bthreatening\b",
     ]
-=======
-def _harmlessness_score(pathway_lower: str) -> int:
-    harmful_terms = {
-        "revenge",
-        "retaliate",
-        "retaliation",
-        "spy",
-        "sabotage",
-        "blackmail",
-        "threaten",
-    }
->>>>>>> origin/main
+
     safety_cues = {
         "avoid",
         "do not",
@@ -209,11 +175,7 @@ def _harmlessness_score(pathway_lower: str) -> int:
 
     sentences = re.split(r"[.!?\n]+", pathway_lower)
     for sentence in sentences:
-<<<<<<< HEAD
         if not any(re.search(pattern, sentence) for pattern in harmful_patterns):
-=======
-        if not any(term in sentence for term in harmful_terms):
->>>>>>> origin/main
             continue
         if any(cue in sentence for cue in safety_cues):
             continue
@@ -221,7 +183,6 @@ def _harmlessness_score(pathway_lower: str) -> int:
     return 4
 
 
-<<<<<<< HEAD
 def _build_judge_messages(
     query: str,
     citations: list[dict[str, Any]],
@@ -332,9 +293,6 @@ def _parse_llm_judge_response(raw: str, *, min_score: int, model: str) -> dict[s
 
 
 def _run_heuristic_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:
-=======
-def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:
->>>>>>> origin/main
     citation_text = " ".join(c.get("translation", "") for c in citations).lower()
     pathway_lower = pathway.lower()
 
@@ -406,7 +364,6 @@ def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) 
         "rationale": rationale,
         "revision_hints": revision_hints,
         "judgeModel": "local-g-eval-heuristic",
-<<<<<<< HEAD
         "judgeFallback": False,
         "auditStatus": "ok" if passed else "below_threshold",
     }
@@ -446,7 +403,42 @@ async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway:
         fallback["auditStatus"] = "fallback_ok" if fallback.get("passed") else "fallback_below_threshold"
         fallback["llmJudgeError"] = str(exc)
         return fallback
-=======
+        "judgeFallback": False,
         "auditStatus": "ok" if passed else "below_threshold",
     }
->>>>>>> origin/main
+
+
+async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:
+    min_score = get_settings().audit_min_score
+    if not citations:
+        return apply_grounding_contract(_run_heuristic_g_eval_judge(query, citations, pathway), query, citations, pathway)
+
+    settings = get_settings()
+    model = select_model("judge")
+    try:
+        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as client:
+            response = await client.post(
+                "/api/chat",
+                json={
+                    "model": model,
+                    "messages": _build_judge_messages(query, citations, pathway, min_score),
+                    "format": "json",
+                    "stream": False,
+                    "think": False,
+                    "keep_alive": "30m",
+                    "options": {"temperature": 0.0, "num_predict": 240, "num_ctx": 2048},
+                },
+            )
+            response.raise_for_status()
+            raw = (response.json().get("message") or {}).get("content", "")
+            audit = _parse_llm_judge_response(raw, min_score=min_score, model=model)
+            return apply_grounding_contract(audit, query, citations, pathway)
+    except Exception as exc:
+        logger.warning("LLM G-Eval judge failed; using heuristic fallback: %s", exc)
+        fallback = apply_grounding_contract(_run_heuristic_g_eval_judge(query, citations, pathway), query, citations, pathway)
+        fallback["judgeModel"] = f"{fallback['judgeModel']}-fallback"
+        fallback["judgeFallback"] = True
+        fallback["judgeFailureReason"] = "llm_judge_unavailable"
+        fallback["auditStatus"] = "fallback_ok" if fallback.get("passed") else "fallback_below_threshold"
+        fallback["llmJudgeError"] = str(exc)
+        return fallback
