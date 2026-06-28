@@ -1,6 +1,7 @@
 from app.llm.generator import (
     _build_synthesis_prompt,
     _clean_synthesis_output,
+    _is_caregiver_burnout_dilemma,
     _should_reject_synthesis,
     _synthesis_rejection_reason,
 )
@@ -29,6 +30,35 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
     assert "name two exact sources from Citation anchors and reuse at least one anchor keyword from each" in prompt
     assert "Start with a practical verb" not in prompt
     assert "situation-specific moral stance" not in prompt
+
+
+def test_caregiver_burnout_prompt_prioritizes_support_over_business_finances():
+    dilemma = (
+        "I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted. "
+        "I feel like giving up on everything."
+    )
+    prompt = _build_synthesis_prompt(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "chapter": "Verse",
+                "verse": "3",
+                "translation": "Mind precedes all things.",
+                "keywords": ["care", "mind", "peace"],
+            }
+        ],
+        "",
+    )
+
+    assert _is_caregiver_burnout_dilemma(dilemma)
+    assert "treat exhaustion, hopelessness, and 'giving up' as the urgent center" in prompt
+    assert "must not start with business finances, debt tracking, saving money, or productivity" in prompt
+    assert "contact one real person today" in prompt
+    assert "parent-care coverage" in prompt
+    assert "local emergency or crisis support now" in prompt
 
 
 def test_clean_synthesis_output_removes_prompt_echo_before_summary():

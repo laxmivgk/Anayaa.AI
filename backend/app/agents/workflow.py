@@ -1,5 +1,8 @@
+<<<<<<< HEAD
 import json
 import logging
+=======
+>>>>>>> main
 import json
 import logging
 import re
@@ -16,6 +19,7 @@ from app.memory.redis_cache import RedisCache
 
 logger = logging.getLogger(__name__)
 
+<<<<<<< HEAD
 import re
 from typing import Any
 
@@ -30,6 +34,8 @@ from app.memory.redis_cache import RedisCache
 
 logger = logging.getLogger(__name__)
 
+=======
+>>>>>>> main
 REWRITE_REPLACEMENTS = {
     r"\bfrnd\b": "friend",
     r"\bfreind\b": "friend",
@@ -45,8 +51,11 @@ REWRITE_REPLACEMENTS = {
     r"\bbcoz\b": "because",
     r"\bdrops+h+ipping\b": "dropshipping",
     r"\bscaming\b": "scamming",
+<<<<<<< HEAD
     r"\bdrops+h+ipping\b": "dropshipping",
     r"\bscaming\b": "scamming",
+=======
+>>>>>>> main
 }
 
 PLANNER_STOPWORDS = {
@@ -110,7 +119,10 @@ PLANNER_PRIORITY_TERMS = {
     "compassion",
     "conflict",
     "dropshipping",
+<<<<<<< HEAD
     "dropshipping",
+=======
+>>>>>>> main
     "duty",
     "financial",
     "financially",
@@ -150,7 +162,10 @@ MORAL_REWRITE_TERMS = {
     "cheat",
     "conflict",
     "dropshipping",
+<<<<<<< HEAD
     "dropshipping",
+=======
+>>>>>>> main
     "forgive",
     "friend",
     "guilt",
@@ -231,7 +246,10 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
     return list(dict.fromkeys([*priority, *remaining]))[:limit]
 
 
+<<<<<<< HEAD
 def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
+=======
+>>>>>>> main
 def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
     followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
     strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
@@ -385,6 +403,7 @@ async def run_strategic_planner(
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
     except ValueError as exc:
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
+<<<<<<< HEAD
     followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
     strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
     stats = {"total": len(records), "followed": followed, "strayed": strayed}
@@ -537,6 +556,8 @@ async def run_strategic_planner(
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
     except ValueError as exc:
         raise ServiceUnavailableError("LLM strategic planner", str(exc)) from exc
+=======
+>>>>>>> main
 
 
 def _short_context_text(value: Any, max_chars: int = 280) -> str:
@@ -666,7 +687,10 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
     compressed_query = compression.compressed_prompt or dilemma
     sub_queries = _build_sub_queries(dilemma, compressed_query)
     cache_key, versions = build_semantic_cache_key(dilemma, keywords)
+<<<<<<< HEAD
     cache_key, versions = build_semantic_cache_key(dilemma, keywords)
+=======
+>>>>>>> main
     return {
         "subQueries": sub_queries,
         "multiQueryEnabled": len(sub_queries) > 1,
@@ -675,8 +699,11 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
         "compressionMetrics": compression.to_dict(),
         "cacheKey": cache_key,
         "cacheVersions": versions,
+<<<<<<< HEAD
         "cacheKey": cache_key,
         "cacheVersions": versions,
+=======
+>>>>>>> main
         "faithFilters": [],
     }
 

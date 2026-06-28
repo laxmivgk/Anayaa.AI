@@ -36,8 +36,11 @@ class PasswordResetConfirmBody(BaseModel):
 async def login(body: LoginBody, request: Request):
     email = normalize_email(body.email)
     ok, err = verify_identity(email)
+<<<<<<< HEAD
     email = normalize_email(body.email)
     ok, err = verify_identity(email)
+=======
+>>>>>>> main
     if not ok:
         raise HTTPException(status_code=400, detail=err)
 

@@ -1,3 +1,7 @@
+import asyncio
+from types import SimpleNamespace
+
+from app.agents import adk_workflow
 from app.agents.adk_workflow import _retrieval_matches_query
 from app.agents.workflow import _extract_planner_keywords
 from app.mcp.client import _merge_candidates
@@ -6,6 +10,40 @@ from app.retrieval.hybrid_search import execute_hybrid_search, rerank_candidates
 
 
 ENVIRONMENT_BUSY_LIFE_QUERY = "how can I save the environment with a busy life?"
+
+
+def test_retriever_node_reaches_mcp_for_discipline_question(monkeypatch):
+    calls = []
+
+    async def fake_retrieve_via_mcp(query, keywords, *, limit, top_k):
+        calls.append({"query": query, "keywords": keywords, "limit": limit, "top_k": top_k})
+        verse = {
+            "id": "test-discipline",
+            "source": "Bhagavad Gita",
+            "reference": "6.26",
+            "translation": "A disciplined mind returns to steady practice.",
+            "context": "discipline, practice, and self-control",
+            "keywords": ["discipline", "practice", "self-control"],
+        }
+        row = {"verse": verse, "score": 92, "method": "test"}
+        return {"candidates": [row], "reranked": [row], "hybridSource": "test", "mcp": True}
+
+    monkeypatch.setattr(adk_workflow, "retrieve_via_mcp", fake_retrieve_via_mcp)
+    ctx = SimpleNamespace(state={"request_id": "test-retriever-discipline", "hitl_enabled": False})
+
+    result = asyncio.run(
+        adk_workflow.retriever_node._func(
+            ctx,
+            {"dilemma": "How to be disciplined?", "keywords": ["discipline"], "reactTurn": 1},
+        )
+    )
+
+    assert calls == [
+        {"query": "How to be disciplined?", "keywords": ["discipline"], "limit": 10, "top_k": 3}
+    ]
+    assert result["retrievalViaMcp"] is True
+    assert result["contextSufficient"] is True
+    assert result["citations"][0]["id"] == "test-discipline"
 
 
 def test_environment_busy_life_query_reaches_relevant_retrieval():

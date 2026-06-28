@@ -52,7 +52,6 @@ CONCEPT_CLOUDS: dict[str, list[str]] = {
     "anger": ["fury", "hatred", "vengeance", "revenge", "conflict", "retaliation", "dispute", "violent", "argument"],
     "greed": ["money", "wealth", "financial", "financially", "company", "covet", "belonging", "gain", "ambition", "profit", "stealing", "cheat"],
     "business": ["dropshipping", "scam", "scamming", "honesty", "integrity", "fairness", "truth", "wealth", "customer", "selling"],
-    "business": ["dropshipping", "scam", "scamming", "honesty", "integrity", "fairness", "truth", "wealth", "customer", "selling"],
     "duty": ["karma", "work", "prescribed", "action", "obligation", "responsibility", "effort", "career", "job", "survive", "company"],
     "betrayal": ["partner", "partners", "backstab", "enemy", "lying", "cheat", "scam", "business", "friend", "divorce"],
     "environment": ["earth", "world", "nature", "sustainable", "sharing", "sharing wealth", "greed", "renunciation"],

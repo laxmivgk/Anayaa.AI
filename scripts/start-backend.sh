@@ -122,8 +122,6 @@ load_env() {
 ensure_ollama() {
   local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
   local models=(gemma2:2b qwen3:4b llama3.2:3b)
-  local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-  local models=(gemma2:2b qwen3:4b llama3.2:3b)
 
   if ! command -v ollama >/dev/null 2>&1; then
     warn "Ollama is not installed. Install from https://ollama.com then re-run this script."
@@ -158,7 +156,6 @@ ensure_ollama() {
 
 ensure_postgres() {
   local host="${POSTGRES_HOST:-127.0.0.1}"
-  
   local port="${POSTGRES_PORT:-5432}"
   if pg_isready -h "$host" -p "$port" >/dev/null 2>&1; then
     log "PostgreSQL is running at ${host}:${port}"
@@ -171,7 +168,6 @@ ensure_postgres() {
 
 ensure_redis() {
   local url="${REDIS_URL:-redis://127.0.0.1:6379/0}"
-  
   if python - "$url" <<'PY'
 import sys
 from urllib.parse import urlparse
@@ -180,7 +176,6 @@ import redis
 url = sys.argv[1]
 parsed = urlparse(url)
 client = redis.Redis(host=parsed.hostname or "127.0.0.1", port=parsed.port or 6379, db=int((parsed.path or "/0").lstrip("/") or 0))
-
 client.ping()
 PY
   then

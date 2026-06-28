@@ -9,4 +9,3 @@ if [[ ! -d node_modules ]]; then
 fi
 
 exec npm run dev -- --host 127.0.0.1
-

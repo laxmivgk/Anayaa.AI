@@ -4,7 +4,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import require_auth
 from app.agents.pipeline_errors import PipelineError
-from app.agents.pipeline_errors import PipelineError
 from app.agents.pipeline_messages import build_quality_failure_user_message
 from app.eco.aggregator import get_daily_rollup
 from app.hitl.checkpoints import resume_checkpoint
@@ -17,8 +16,6 @@ from app.observability.guidance_reasons import build_guidance_reasons
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
 from app.security.harm_normalizer import normalize_harmful_concepts, normalize_harmful_framing_text
-from app.retrieval.corpus import get_corpus
-from app.resilience.health import check_health, deep_health
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -30,7 +27,6 @@ async def system_status(request: Request):
     redis = request.app.state.redis
     health = await check_health(pg, redis, getattr(request.app.state, "milvus_status", None))
     return {
-        "quantizedModel": "qwen3:4b-local",
         "quantizedModel": "qwen3:4b-local",
         "speculativeDraftModel": "gemma2:2b-local",
         "acceleration": "Local Apple Silicon / NPU Node",
@@ -217,7 +213,6 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
             "keywords": concepts or payload.get("keywords", []),
             "citations": citations,
             "moralPathway": pathway if audit.get("passed") else None,
-            "guidanceReasons": build_guidance_reasons(dilemma, citations, pathway, audit) if audit.get("passed") else [],
             "guidanceReasons": build_guidance_reasons(dilemma, citations, pathway, audit) if audit.get("passed") else [],
             "hitl": {
                 **hitl,
