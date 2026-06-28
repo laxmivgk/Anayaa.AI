@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-time seed: load google_studio scriptures into PostgreSQL and Milvus."""
+"""One-time seed: load scriptures into PostgreSQL and Milvus."""
 from __future__ import annotations
 
 import asyncio
@@ -82,7 +82,7 @@ async def seed_postgres(pg: PostgresPool, corpus, checksum: str) -> int:
     await pg.execute(
         """
         UPDATE corpus_status SET ready = TRUE, verse_count = $1, last_seed_at = NOW(),
-        seed_version = 'google_studio_v1', seed_checksum = $2 WHERE id = 1
+        seed_version = 'scriptures_v1', seed_checksum = $2 WHERE id = 1
         """,
         len(corpus),
         checksum,
