@@ -5,12 +5,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB_NAME="${POSTGRES_DB:-anayaa}"
 DB_USER="${POSTGRES_USER:-anayaa}"
-DB_PASSWORD="${POSTGRES_PASSWORD:-anayaa_dev}"
-<<<<<<< HEAD
+DB_PASSWORD="${POSTGRES_PASSWORD:-anayaa_
+}"
 PGHOST="${POSTGRES_HOST:-127.0.0.1}"
-=======
-PGHOST="${POSTGRES_HOST:-localhost}"
->>>>>>> origin/main
+
 PGPORT="${POSTGRES_PORT:-5432}"
 
 echo "Setting up PostgreSQL at ${PGHOST}:${PGPORT} ..."

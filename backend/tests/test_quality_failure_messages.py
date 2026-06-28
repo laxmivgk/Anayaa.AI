@@ -28,7 +28,6 @@ def test_quality_failure_points_to_interactive_regeneration():
         min_score=3,
     )
 
-<<<<<<< HEAD
     assert "The Interactive Guidance" in message
     assert "try again later" not in message
 
@@ -55,7 +54,29 @@ def test_grounding_contract_failure_uses_user_facing_copy():
     assert "retrieved scripture passages" in message
     assert "grounding contract" not in message.lower()
     assert "Revise the final answer" not in message
-=======
-    assert "Use The Interactive Guidance" in message
+    assert "The Interactive Guidance" in message
     assert "try again later" not in message
->>>>>>> origin/main
+
+
+def test_grounding_contract_failure_uses_user_facing_copy():
+    message = build_quality_failure_user_message(
+        {
+            "scores": {
+                "faithfulness": 5,
+                "citation_grounding": 5,
+                "query_relevance": 5,
+                "dharma_alignment": 5,
+                "harmlessness": 5,
+                "privacy": 5,
+            },
+            "failedDimensions": ["grounding_contract"],
+            "revision_hints": [
+                "Revise the final answer so Scripture grounding uses at least two retrieved citations, repeats citation terms, stays on the user's topic, and avoids unsupported assumptions."
+            ],
+        },
+        min_score=3,
+    )
+
+    assert "retrieved scripture passages" in message
+    assert "grounding contract" not in message.lower()
+    assert "Revise the final answer" not in message

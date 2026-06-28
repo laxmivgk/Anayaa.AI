@@ -5,7 +5,6 @@ from app.api.deps import require_auth
 from app.auth.identity import verify_identity
 from app.auth.jwt import create_access_token
 from app.auth.session import SessionManager
-<<<<<<< HEAD
 from app.auth.users import (
     create_password_reset_code,
     normalize_email,
@@ -13,8 +12,6 @@ from app.auth.users import (
     reset_user_password,
     verify_user_credentials,
 )
-=======
->>>>>>> origin/main
 from app.config import get_settings
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
@@ -22,7 +19,6 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 class LoginBody(BaseModel):
     email: str
-<<<<<<< HEAD
     password: str
 
 
@@ -34,23 +30,18 @@ class PasswordResetConfirmBody(BaseModel):
     email: str
     resetCode: str
     newPassword: str
-=======
->>>>>>> origin/main
 
 
 @router.post("/login")
 async def login(body: LoginBody, request: Request):
-<<<<<<< HEAD
     email = normalize_email(body.email)
     ok, err = verify_identity(email)
-=======
-    ok, err = verify_identity(str(body.email))
->>>>>>> origin/main
+    email = normalize_email(body.email)
+    ok, err = verify_identity(email)
     if not ok:
         raise HTTPException(status_code=400, detail=err)
 
     settings = get_settings()
-<<<<<<< HEAD
     pg = request.app.state.pg
     authenticated_email = await verify_user_credentials(pg, email, body.password)
     if authenticated_email is None:
@@ -64,17 +55,11 @@ async def login(body: LoginBody, request: Request):
     token, session_id, expires = create_access_token(authenticated_email)
     session_mgr: SessionManager = request.app.state.session_mgr
     await session_mgr.register_session(session_id, authenticated_email, settings.jwt_exp_minutes * 60)
-=======
-    token, session_id, expires = create_access_token(str(body.email))
-    session_mgr: SessionManager = request.app.state.session_mgr
-    await session_mgr.register_session(session_id, str(body.email), settings.jwt_exp_minutes * 60)
->>>>>>> origin/main
 
     return {
         "success": True,
         "token": token,
         "expiresInMinutes": expires,
-<<<<<<< HEAD
         "email": authenticated_email,
     }
 
@@ -113,12 +98,6 @@ async def confirm_password_reset(body: PasswordResetConfirmBody, request: Reques
     return {"success": True, "email": updated_email}
 
 
-=======
-        "email": str(body.email),
-    }
-
-
->>>>>>> origin/main
 @router.post("/refresh")
 async def refresh(request: Request, user=Depends(require_auth)):
     email = user.get("email") or user.get("sub")
