@@ -2,7 +2,7 @@
 
 Anayaa.AI is a local-first scripture-grounded guidance app for moral and life dilemmas. It accepts a user's question, sanitizes and rewrites the query when needed, retrieves scripture evidence through an MCP and Milvus boundary, generates guidance with local LLMs, audits the result for faithfulness and safety, and tracks request-level eco metrics.
 
-The project is built for local development without Docker.
+The project is built for local use.
 
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
