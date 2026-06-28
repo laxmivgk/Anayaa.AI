@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, query, system
 from app.auth.session import SessionManager
 from app.auth.users import ensure_users_table
-from app.auth.users import ensure_users_table
 from app.config import get_settings
 from app.memory.milvus_store import MilvusStore
 from app.memory.postgres import PostgresPool
@@ -15,7 +14,6 @@ from app.memory.redis_cache import RedisCache
 from app.privacy.retention import retention_loop
 from app.retrieval.corpus import load_scriptures_json
 from app.retrieval.embeddings import get_embedder
-from app.llm.generator import prewarm_ollama_models
 from app.llm.generator import prewarm_ollama_models
 
 

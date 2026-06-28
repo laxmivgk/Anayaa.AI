@@ -42,7 +42,6 @@ from app.observability.guidance_reasons import build_guidance_reasons
 from app.observability.latency import AgentLatencyTracker
 from app.observability.plan_trace import persist_request_plan_trace
 
-
 logger = logging.getLogger(__name__)
 
 _session_service = InMemorySessionService()
@@ -96,7 +95,6 @@ SCRIPTURE_BRIDGES = {
     "business": {"business", "fairness", "justice", "integrity", "wealth", "duty", "work"},
     "company": {"business", "wealth", "work", "duty", "responsibility", "hardship", "failure"},
     "dropshipping": {"business", "integrity", "honesty", "wealth", "fairness", "responsibility"},
-  
     "financial": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
     "financially": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
     "friend": {"friend", "goodwill", "love", "compassion", "trust"},
@@ -541,25 +539,6 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     keywords = payload.get("keywords", [])
     audit = payload.get("auditScores") or {}
     context_sufficient = bool(payload.get("contextSufficient", True))
-    settings = get_settings()
-    turn = int(payload.get("reactTurn") or 0) + 1
-    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
-    if payload.get("plannerError"):
-        _mark_agent(ctx, "ReActReasoner", category="workflow", status="skipped", metadata={"reason": "planner_unavailable"})
-        return {
-            **payload,
-            "reactTurn": turn,
-            "reactLoopLimit": settings.react_max_turns,
-            "reactReasoning": "Planner unavailable; finalize with an explicit planner-unavailable response.",
-            "reactSearchQuery": dilemma,
-            "reactLoopLog": [
-                *payload.get("reactLoopLog", []),
-                f"Turn {turn} Reason: Planner unavailable; retrieval and synthesis skipped.",
-            ],
-        }
-    keywords = payload.get("keywords", [])
-    audit = payload.get("auditScores") or {}
-    context_sufficient = bool(payload.get("contextSufficient", True))
 
     reason = "Initial reasoning pass: retrieve scripture context and draft grounded guidance."
     if payload.get("retrievalError"):
@@ -636,30 +615,6 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
             **payload,
             "searchQuery": payload.get("dilemma") or ctx.state.get("dilemma", ""),
             "retrievalQueries": [],
-            "multiQueryUsed": False,
-            "hybridSource": None,
-            "candidatesCount": 0,
-            "rerankedCitations": [],
-            "citations": [],
-            "retrievalViaMcp": False,
-            "contextSufficient": False,
-            "topRetrievalScore": 0,
-            "retrievalThreshold": settings.retrieval_confidence_threshold,
-        }
-    if payload.get("skipRetryRetrieval"):
-        _mark_agent(ctx, "McpRetriever", category="tool", status="skipped", metadata={"reason": "retry_planner_finalized"})
-        return payload
-    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
-    search_query = payload.get("reactSearchQuery") or dilemma
-    keywords = payload.get("keywords", [])
-    if not _is_moral_guidance_query(dilemma):
-        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-        if eco:
-            eco.track_stage("Retriever", confidence=0)
-        return {
-            **payload,
-            "searchQuery": dilemma,
-            "retrievalQueries": [dilemma],
             "multiQueryUsed": False,
             "hybridSource": None,
             "candidatesCount": 0,
@@ -1006,8 +961,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["loopDetails"] = _react_loop_details(payload)
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
 
     if payload.get("preSynthesisApprovalRequired"):
         candidate_items = payload.get("rerankedCitations") or payload.get("candidates") or []
@@ -1066,8 +1019,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         }
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
 
     audit = payload.get("auditScores") or {}
     if not audit.get("passed", False):
@@ -1088,8 +1039,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["previousContextQuestion"] = payload.get("previousContextQuestion")
         result["executionPlan"] = _execution_plan(payload, audit)
         result["loopDetails"] = _react_loop_details(payload)
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
 
@@ -1121,7 +1070,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "multiQueryUsed": payload.get("multiQueryUsed", False),
         "moralPathway": payload.get("moralPathway"),
         "guidanceReasons": build_guidance_reasons(dilemma, citations, payload.get("moralPathway"), audit),
-        "guidanceReasons": build_guidance_reasons(dilemma, citations, payload.get("moralPathway"), audit),
         "quantizedMetrics": payload.get("quantizedMetrics"),
         "synthesisEngine": payload.get("synthesisEngine"),
         "confidence": payload.get("confidence", 0),
@@ -1144,11 +1092,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         }
 
     cache_key = payload.get("cacheKey")
-    _attach_cache_policy(result, cache_key)
-    if redis and cache_key and _is_safe_to_cache(result):
-        await store_semantic_cache(redis, cache_key, result)
-
-    return await _finalize_with_trace(ctx, result)
     _attach_cache_policy(result, cache_key)
     if redis and cache_key and _is_safe_to_cache(result):
         await store_semantic_cache(redis, cache_key, result)
@@ -1295,7 +1238,6 @@ async def run_adk_pipeline(
                 if "status" in event.output or "moralPathway" in event.output or event.author in {"finalize", "anayaa_dharma_workflow"}:
                     final_payload = event.output
     finally:
-        await _delete_adk_session(user_email, session_id)
         await _delete_adk_session(user_email, session_id)
         _runtime_contexts.pop(request_id, None)
 

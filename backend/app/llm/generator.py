@@ -5,7 +5,6 @@ import logging
 import re
 import time
 from html import unescape
-from html import unescape
 from typing import Any
 
 import httpx
@@ -176,14 +175,12 @@ async def generate_moral_pathway(
                     ],
                     "stream": False,
                     "think": False,
-                    "think": False,
                     "keep_alive": "30m",
                     "options": {"temperature": 0.0, "num_predict": 320, "num_ctx": 2048},
                 },
             )
             response.raise_for_status()
             data = response.json()
-            pathway = _clean_synthesis_output((data.get("message") or {}).get("content", ""))
             pathway = _clean_synthesis_output((data.get("message") or {}).get("content", ""))
             if not pathway:
                 raise ValueError("Empty LLM response")
@@ -254,7 +251,6 @@ def _build_synthesis_prompt(
         f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
         f"Retrieved scriptures:\n{citations_block}\n\n"
-        f"Citation anchors:\n{anchors_block}\n\n"
         f"Citation anchors:\n{anchors_block}\n\n"
         "Write exactly these 5 labeled sections, 180 words or fewer total.\n"
         "Use simple everyday words. Each title must be visible at the start of its own line:\n"
@@ -408,7 +404,6 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "with",
         "would",
         "wisest",
-        "wisest",
         "should",
         "need",
         "want",
@@ -426,7 +421,6 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     pathway_lower = pathway.lower()
     focus_terms = _query_focus_terms(dilemma)
     if focus_terms:
-        matches = [term for term in focus_terms if _focus_term_in_text(term, pathway_lower)]
         matches = [term for term in focus_terms if _focus_term_in_text(term, pathway_lower)]
         required_matches = 1 if len(focus_terms) <= 2 else 2
         if len(matches) < required_matches:

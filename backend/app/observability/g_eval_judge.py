@@ -1,8 +1,5 @@
 import json
 import logging
-import json
-import logging
-
 import re
 from typing import Any
 
@@ -155,7 +152,6 @@ def _harmlessness_score(pathway_lower: str) -> int:
         r"\bthreaten\b",
         r"\bthreatening\b",
     ]
-
     safety_cues = {
         "avoid",
         "do not",
@@ -367,42 +363,6 @@ def _run_heuristic_g_eval_judge(query: str, citations: list[dict[str, Any]], pat
         "judgeFallback": False,
         "auditStatus": "ok" if passed else "below_threshold",
     }
-
-
-async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:
-    min_score = get_settings().audit_min_score
-    if not citations:
-        return apply_grounding_contract(_run_heuristic_g_eval_judge(query, citations, pathway), query, citations, pathway)
-
-    settings = get_settings()
-    model = select_model("judge")
-    try:
-        async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=60.0) as client:
-            response = await client.post(
-                "/api/chat",
-                json={
-                    "model": model,
-                    "messages": _build_judge_messages(query, citations, pathway, min_score),
-                    "format": "json",
-                    "stream": False,
-                    "think": False,
-                    "keep_alive": "30m",
-                    "options": {"temperature": 0.0, "num_predict": 240, "num_ctx": 2048},
-                },
-            )
-            response.raise_for_status()
-            raw = (response.json().get("message") or {}).get("content", "")
-            audit = _parse_llm_judge_response(raw, min_score=min_score, model=model)
-            return apply_grounding_contract(audit, query, citations, pathway)
-    except Exception as exc:
-        logger.warning("LLM G-Eval judge failed; using heuristic fallback: %s", exc)
-        fallback = apply_grounding_contract(_run_heuristic_g_eval_judge(query, citations, pathway), query, citations, pathway)
-        fallback["judgeModel"] = f"{fallback['judgeModel']}-fallback"
-        fallback["judgeFallback"] = True
-        fallback["judgeFailureReason"] = "llm_judge_unavailable"
-        fallback["auditStatus"] = "fallback_ok" if fallback.get("passed") else "fallback_below_threshold"
-        fallback["llmJudgeError"] = str(exc)
-        return fallback
 
 
 async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:
