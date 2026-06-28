@@ -408,6 +408,3 @@ The repository is configured for local development. Before production deployment
 - Treat optional cloud LLM routing as a privacy-sensitive integration.
 
 Local defaults such as localhost CORS, generated dev secrets, and local JWT storage are development conveniences, not production security guidance.
-
-
-fix
