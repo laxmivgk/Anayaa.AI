@@ -237,6 +237,16 @@ def _build_synthesis_prompt(
     tone = tone_msg or "Balanced guidance mode"
     focus_terms = _query_focus_terms(dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
+    caregiver_burnout_instruction = ""
+    if _is_caregiver_burnout_dilemma(dilemma):
+        caregiver_burnout_instruction = (
+            "For this caregiver-burnout question, treat exhaustion, hopelessness, and 'giving up' as the urgent center. "
+            "The Next step must not start with business finances, debt tracking, saving money, or productivity. "
+            "The Next step should tell the user to contact one real person today, say they are burned out and cannot carry this alone, "
+            "and ask for one concrete relief action such as parent-care coverage, a meal, a ride, or help calling a doctor, social worker, or respite resource. "
+            "If the user may harm themselves or cannot stay safe, tell them to contact local emergency or crisis support now. "
+            "Keep business decisions secondary until the user has immediate support and rest.\n"
+        )
     business_integrity_instruction = ""
     if _is_business_integrity_dilemma(dilemma):
         business_integrity_instruction = (
@@ -261,6 +271,7 @@ def _build_synthesis_prompt(
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
+        f"{caregiver_burnout_instruction}"
         f"{business_integrity_instruction}"
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
@@ -495,3 +506,10 @@ def _is_business_integrity_dilemma(value: str) -> bool:
     business_terms = {"dropshipping", "business", "selling", "seller", "customer", "profit"}
     integrity_terms = {"scam", "scamming", "honest", "integrity", "mislead", "fraud", "trust"}
     return any(term in lower for term in business_terms) and any(term in lower for term in integrity_terms)
+
+
+def _is_caregiver_burnout_dilemma(value: str) -> bool:
+    lower = value.lower()
+    caregiver_terms = {"parent", "sick", "care", "caregiver", "caring"}
+    exhaustion_terms = {"burned out", "burnt out", "burnout", "hopeless", "exhausted", "giving up", "overwhelmed"}
+    return any(term in lower for term in caregiver_terms) and any(term in lower for term in exhaustion_terms)
