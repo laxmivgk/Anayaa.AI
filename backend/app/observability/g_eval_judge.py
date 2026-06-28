@@ -403,9 +403,6 @@ async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway:
         fallback["auditStatus"] = "fallback_ok" if fallback.get("passed") else "fallback_below_threshold"
         fallback["llmJudgeError"] = str(exc)
         return fallback
-        "judgeFallback": False,
-        "auditStatus": "ok" if passed else "below_threshold",
-    }
 
 
 async def run_g_eval_judge(query: str, citations: list[dict[str, Any]], pathway: str) -> dict[str, Any]:

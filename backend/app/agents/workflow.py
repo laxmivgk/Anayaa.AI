@@ -232,7 +232,6 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
 
 
 def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
-def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, dict[str, int]]:
     followed = sum(1 for r in records if r.get("status") == "FOLLOWED_DHARMA")
     strayed = sum(1 for r in records if r.get("status") == "STRAYED_FROM_PATH")
     stats = {"total": len(records), "followed": followed, "strayed": strayed}

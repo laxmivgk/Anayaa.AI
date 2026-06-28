@@ -117,7 +117,6 @@ def _merge_candidates(hybrid_data: dict[str, Any], graph_data: dict[str, Any], l
         if verse_id not in merged or item.get("score", 0) > merged[verse_id].get("score", 0):
             merged[verse_id] = item
 
-<<<<<<< HEAD
     ranked = sorted(merged.values(), key=lambda row: row.get("score", 0), reverse=True)
     selected = ranked[:limit]
     if any(item.get("method") == "KnowledgeGraph" for item in selected):
@@ -137,6 +136,3 @@ def _merge_candidates(hybrid_data: dict[str, Any], graph_data: dict[str, Any], l
         return selected
 
     return sorted([*selected[: max(limit - 1, 0)], top_graph], key=lambda row: row.get("score", 0), reverse=True)
-=======
-    return sorted(merged.values(), key=lambda row: row.get("score", 0), reverse=True)[:limit]
->>>>>>> origin/main

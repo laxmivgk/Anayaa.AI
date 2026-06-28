@@ -16,14 +16,6 @@ from google.genai import types
 
 from app.agents.cache_policy import cache_policy_metadata
 from app.agents.pipeline_errors import PipelineError, RetrievalError, ServiceUnavailableError
-from app.agents.cache_policy import cache_policy_metadata
-from app.agents.pipeline_errors import PipelineError, RetrievalError, ServiceUnavailableError
-from app.agents.pipeline_messages import (
-    build_insufficient_context_response,
-    build_planner_unavailable_response,
-    build_quality_failure_response,
-    build_retrieval_unavailable_response,
-    build_synthesizer_unavailable_response,
 from app.agents.pipeline_messages import (
     build_insufficient_context_response,
     build_planner_unavailable_response,
@@ -41,7 +33,6 @@ from app.agents.workflow import (
 from app.config import get_settings
 from app.eco.tracker import EcoTracker
 from app.llm.generator import generate_moral_pathway
-from app.llm.router import select_model
 from app.llm.router import select_model
 from app.mcp.client import retrieve_via_mcp
 from app.memory.redis_cache import RedisCache
@@ -431,14 +422,6 @@ def _is_safe_to_cache(result: dict[str, Any]) -> bool:
         and str(audit.get("auditStatus") or "") == "ok"
         and bool(grounding_contract.get("passed"))
         and len(result.get("citations") or []) >= 2
-    grounding_contract = audit.get("groundingContract") or {}
-    return (
-        result.get("status") == "completed"
-        and bool(audit.get("passed"))
-        and not bool(audit.get("judgeFallback", False))
-        and str(audit.get("auditStatus") or "") == "ok"
-        and bool(grounding_contract.get("passed"))
-        and len(result.get("citations") or []) >= 2
         and result.get("moralPathway") is not None
     )
 
@@ -538,7 +521,6 @@ async def optimizer_node(ctx, node_input: Any) -> dict[str, Any]:
     }
 
 
-async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
 async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     turn = int(payload.get("reactTurn") or 0) + 1
@@ -864,24 +846,6 @@ async def react_observe_node(ctx, node_input: dict[str, Any]) -> Event:
     audit_passed = bool(audit.get("passed", False))
     planner_error = payload.get("plannerError")
     synthesizer_error = payload.get("synthesizerError")
-    planner_error = payload.get("plannerError")
-    synthesizer_error = payload.get("synthesizerError")
-    retrieval_error = payload.get("retrievalError")
-    retrieval_blocked = payload.get("retrievalBlocked")
-    retry_planner_stopped = bool(payload.get("skipRetryRetrieval"))
-
-    route = "finalize"
-    observation = "Observation: quality threshold passed; finalize response."
-    if planner_error:
-        observation = "Observation: strategic planner failed; finalize with a planner-unavailable message."
-    elif synthesizer_error:
-        observation = "Observation: guidance synthesizer failed; finalize with a synthesizer-unavailable message."
-    elif retry_planner_stopped:
-        if payload.get("reactRetryPlanError"):
-            observation = "Observation: retry planner failed; finalize without deterministic retry fallback."
-        else:
-            observation = "Observation: retry planner chose to finalize without another retrieval attempt."
-    elif retrieval_error:
     retrieval_error = payload.get("retrievalError")
     retrieval_blocked = payload.get("retrievalBlocked")
     retry_planner_stopped = bool(payload.get("skipRetryRetrieval"))
@@ -1259,25 +1223,6 @@ async def run_adk_pipeline(
 
     request_id = str(eco.request_id)
     latency = AgentLatencyTracker(request_id=request_id)
-    request_id = str(eco.request_id)
-    latency = AgentLatencyTracker(request_id=request_id)
-    eco.track_stage("SanitizeGate")
-    with latency.track("QueryRewriter", category="deterministic"):
-        rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
-    rewritten_dilemma = rewrite["rewrittenQuery"]
-    with latency.track("QueryOptimizer", category="deterministic", metadata={"phase": "pre_adk_preview"}):
-        optimizer_preview = {
-            **optimize_query(rewritten_dilemma, []),
-            **rewrite,
-        }
-    eco.track_stage("QueryOptimizer")
-
-    with latency.track("SemanticCache", category="cache", metadata={"enabled": not hitl_enabled}):
-        cached = None if hitl_enabled else await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
-    if cached and _is_safe_to_cache(cached):
-        eco.track_stage("CacheReturn", cache_hit=True, confidence=95)
-        power = eco.audit_power_footprint(True, 95)
-        cached_result = {
     eco.track_stage("SanitizeGate")
     with latency.track("QueryRewriter", category="deterministic"):
         rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
@@ -1308,18 +1253,6 @@ async def run_adk_pipeline(
             "ecoBreakdown": eco.totals()["ecoBreakdown"],
             "requestId": eco.request_id,
             "agentLatencyMetrics": latency.snapshot(),
-            "agentLatencyMetrics": latency.snapshot(),
-        }
-        cached_result["cachePolicy"] = {
-            **cached_result.get("cachePolicy", {}),
-            "cacheable": True,
-            "reason": "cache_hit",
-        }
-        await persist_request_plan_trace(pg, request_id, cached_result)
-        return cached_result
-
-    _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco, "latency": latency}
-    session_id: str | None = None
         }
         cached_result["cachePolicy"] = {
             **cached_result.get("cachePolicy", {}),
@@ -1350,7 +1283,6 @@ async def run_adk_pipeline(
                 "optimizer_preview": optimizer_preview,
             },
         )
-        session_id = session.id
         session_id = session.id
 
         final_payload: dict[str, Any] | None = None
