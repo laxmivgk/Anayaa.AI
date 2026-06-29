@@ -658,9 +658,9 @@ export default function App() {
     setHitlConcepts((result.hitl.proposedKeywords || result.keywords || []).join(", "));
     setSelectedHitlVerseIds(
       result.hitl.selectedVerseIds ||
-        (result.hitl.candidateScriptures || [])
-          .map((item) => item.verse?.id || "")
-          .filter((id) => Boolean(id))
+      (result.hitl.candidateScriptures || [])
+        .map((item) => item.verse?.id || "")
+        .filter((id) => Boolean(id))
     );
     setManualScriptureQuery("");
     setSelectedManualScriptureId(null);
@@ -741,14 +741,14 @@ export default function App() {
       if (!activeToken) return;
       const manualPayload = selectedManualScripture
         ? {
-            faith: selectedManualScripture.faith,
-            source: selectedManualScripture.source,
-            chapter: selectedManualScripture.chapter,
-            verse: selectedManualScripture.verse,
-            translation: selectedManualScripture.translation,
-            context: selectedManualScripture.context,
-            keywords: selectedManualScripture.keywords.join(", "),
-          }
+          faith: selectedManualScripture.faith,
+          source: selectedManualScripture.source,
+          chapter: selectedManualScripture.chapter,
+          verse: selectedManualScripture.verse,
+          translation: selectedManualScripture.translation,
+          context: selectedManualScripture.context,
+          keywords: selectedManualScripture.keywords.join(", "),
+        }
         : undefined;
       const res = await fetch("/api/hitl/resume", {
         method: "POST",
@@ -855,8 +855,8 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center p-6">
         <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
-          <h1 className="text-2xl italic mb-2">Anayaa.AI</h1>
-          <p className="mb-6 text-sm text-stone-500">Dharma-driven eco-conscious edge guidance</p>
+          <h1 className="text-4xl italic mb-3">Anayaa.AI</h1>
+          <p className="mb-6 text-sm text-stone-500">Dharma-driven, eco-conscious edge guidance</p>
           <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
             Email
           </label>
@@ -961,6 +961,9 @@ export default function App() {
             </p>
           </div>
         </form>
+        <p className="fixed bottom-3 right-4 text-[10px] text-stone-400">
+          Built with Llama and Gemma
+        </p>
       </div>
     );
   }
@@ -1007,9 +1010,8 @@ export default function App() {
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`w-full text-left px-3 py-2 rounded-xl text-sm capitalize ${
-                activeTab === tab ? "bg-white shadow-sm" : "hover:bg-white/50"
-              }`}
+              className={`w-full text-left px-3 py-2 rounded-xl text-sm capitalize ${activeTab === tab ? "bg-white shadow-sm" : "hover:bg-white/50"
+                }`}
             >
               {tab === "pathway" ? "Active Pathway" : tab === "eco" ? "Eco Audit" : "Scripture Center"}
             </button>
@@ -1310,69 +1312,69 @@ export default function App() {
                         </div>
                       </div>
                     </section>
-                )}
+                  )}
 
-                {!isPreSynthesisApproval && usedCitations.length > 0 && (
-                  <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
-                    <h3 className="font-bold mb-3 flex items-center gap-2">
-                      <BookOpen className="w-4 h-4" /> Scripture Evidence
-                    </h3>
-                    {usedCitations.map((c) => (
-                      <div key={c.id} className="mb-4 pb-4 border-b border-stone-100 last:border-0">
-                        <p className="text-xs font-bold text-[#5A5A40]">
-                          {c.faith} — {c.source} {c.chapter}:{c.verse}
-                        </p>
-                        <p className="text-sm italic mt-1">"{c.translation}"</p>
-                      </div>
-                    ))}
-                  </section>
-                )}
-
-              </div>
-            )}
-
-            {previousConversations.length > 0 && (
-              <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
-                <h3 className="font-bold mb-4">Previous Conversation</h3>
-                <div className="space-y-4">
-                  {previousConversations.map((item) => {
-                    const responseSections = guidanceSections(item.response);
-                    const historyDisplay = guidanceDisplay(responseSections);
-                    return (
-                      <article key={item.id} className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
-                        <p className="font-mono text-[10px] uppercase tracking-wider text-stone-400">
-                          {new Date(item.timestamp).toLocaleString()}
-                        </p>
-                        <div className="mt-3">
-                          <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Question</p>
-                          <p className="mt-2 text-sm leading-6 text-stone-800">{item.question}</p>
+                  {!isPreSynthesisApproval && usedCitations.length > 0 && (
+                    <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+                      <h3 className="font-bold mb-3 flex items-center gap-2">
+                        <BookOpen className="w-4 h-4" /> Scripture Evidence
+                      </h3>
+                      {usedCitations.map((c) => (
+                        <div key={c.id} className="mb-4 pb-4 border-b border-stone-100 last:border-0">
+                          <p className="text-xs font-bold text-[#5A5A40]">
+                            {c.faith} — {c.source} {c.chapter}:{c.verse}
+                          </p>
+                          <p className="text-sm italic mt-1">"{c.translation}"</p>
                         </div>
-                        <div className="mt-4">
-                          <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Response</p>
-                          <div className="mt-2 text-sm leading-6 text-stone-800">
-                            {historyDisplay.summaryText && <p>{historyDisplay.summaryText}</p>}
-                            {historyDisplay.detailSections.length > 0 && (
-                              <div className="mt-3 divide-y divide-[#E5DED2]">
-                                {historyDisplay.detailSections.map((section, index) => (
-                                  <div key={`${item.id}-response-${index}`} className="py-2 first:pt-0 last:pb-0">
-                                    {section.label && (
-                                      <p className="text-sm font-semibold text-[#5A5A40]">
-                                        {section.label}
-                                      </p>
-                                    )}
-                                    <p className="mt-1">{section.text}</p>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </article>
-                    );
-                  })}
+                      ))}
+                    </section>
+                  )}
+
                 </div>
-              </section>
-            )}
+              )}
+
+              {previousConversations.length > 0 && (
+                <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+                  <h3 className="font-bold mb-4">Previous Conversation</h3>
+                  <div className="space-y-4">
+                    {previousConversations.map((item) => {
+                      const responseSections = guidanceSections(item.response);
+                      const historyDisplay = guidanceDisplay(responseSections);
+                      return (
+                        <article key={item.id} className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
+                          <p className="font-mono text-[10px] uppercase tracking-wider text-stone-400">
+                            {new Date(item.timestamp).toLocaleString()}
+                          </p>
+                          <div className="mt-3">
+                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Question</p>
+                            <p className="mt-2 text-sm leading-6 text-stone-800">{item.question}</p>
+                          </div>
+                          <div className="mt-4">
+                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Response</p>
+                            <div className="mt-2 text-sm leading-6 text-stone-800">
+                              {historyDisplay.summaryText && <p>{historyDisplay.summaryText}</p>}
+                              {historyDisplay.detailSections.length > 0 && (
+                                <div className="mt-3 divide-y divide-[#E5DED2]">
+                                  {historyDisplay.detailSections.map((section, index) => (
+                                    <div key={`${item.id}-response-${index}`} className="py-2 first:pt-0 last:pb-0">
+                                      {section.label && (
+                                        <p className="text-sm font-semibold text-[#5A5A40]">
+                                          {section.label}
+                                        </p>
+                                      )}
+                                      <p className="mt-1">{section.text}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
             </div>
           </div>
         )}

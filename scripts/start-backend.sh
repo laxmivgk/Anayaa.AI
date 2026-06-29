@@ -227,10 +227,42 @@ PY
   local status=$?
   set -e
   if [[ $status -eq 2 ]]; then
-    python scripts/seed_milvus.py
+    seed_milvus
   elif [[ $status -ne 0 ]]; then
     exit "$status"
   fi
+}
+
+seed_milvus() {
+  local seed_log
+  seed_log="$(mktemp "${TMPDIR:-/tmp}/anayaa-seed.XXXXXX")"
+
+  log "Seeding Milvus/PostgreSQL scripture data..."
+  if [[ "${OFFLINE_MODE:-true}" == "true" ]]; then
+    log "OFFLINE_MODE=true; seeding requires the embedding model to already be cached."
+  fi
+
+  set +e
+  python scripts/seed_milvus.py 2>&1 | tee "$seed_log"
+  local seed_status=${PIPESTATUS[0]}
+  set -e
+
+  if [[ $seed_status -eq 0 ]]; then
+    rm -f "$seed_log"
+    return 0
+  fi
+
+  if grep -qi "local cache\\|local_files_only\\|Embedding model is not available" "$seed_log"; then
+    echo "[anayaa] ERROR: Milvus is empty, but the embedding model is not cached locally." >&2
+    echo "[anayaa] Connect to Wi-Fi once and run: ./scripts/setup-online.sh" >&2
+    echo "[anayaa] That command installs dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
+  else
+    echo "[anayaa] ERROR: Milvus/PostgreSQL scripture seed failed." >&2
+    echo "[anayaa] If this is a first-time setup or you recently ran cleanup with --storage/--all, run: ./scripts/setup-online.sh" >&2
+  fi
+
+  rm -f "$seed_log"
+  exit "$seed_status"
 }
 
 main() {
