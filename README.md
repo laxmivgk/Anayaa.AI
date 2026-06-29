@@ -43,15 +43,6 @@ Power Draft Monitoring: Shows active CPU/GPU power consumption levels to highlig
 
 
 
-<img width="1899" height="987" alt="image" src="https://github.com/user-attachments/assets/99f1f747-54ac-4813-8e7e-b1cd63812151" />
-<img width="1124" height="1029" alt="image" src="https://github.com/user-attachments/assets/ad338070-759d-4af5-a44f-b3c32165b0eb" />
-<img width="1127" height="1034" alt="image" src="https://github.com/user-attachments/assets/1581e3fd-b63e-4b6b-8e91-ab2e2cae4c74" />
-<img width="829" height="1031" alt="image" src="https://github.com/user-attachments/assets/8f809b28-650b-4cc3-98ac-2d94ab7e11e2" />
-
-
-
-
-
 ## Current Experience
 
 The frontend has three main tabs.
@@ -324,7 +315,6 @@ The main local settings live in `backend/.env`.
 | `TURNS_RETENTION_DAYS` | `30` | Local retention window for stored query turns |
 | `RETENTION_CLEANUP_INTERVAL_SECONDS` | `86400` | Background cleanup cadence |
 
-Do not use `MILVUS_URI` in `.env`. Use `ANAYAA_MILVUS_URI`; the generic `MILVUS_URI` name can conflict with `pymilvus` global configuration.
 
 ## Login Users
 
