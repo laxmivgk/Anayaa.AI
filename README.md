@@ -4,7 +4,7 @@
 # Anayaa.AI 
  Anayaa.AI is a local-first, eco-friendly scripture-grounded guidance app for moral and life dilemmas. Anayaa is an eco-friendly decision support system engineered from the ground up to minimize its physical footprint on our planet. By implementing edge-optimization parametersAnayaa slashes single-query energy costs to a fraction of a watt-hour (~0.06g CO₂e). 
 
-## Problem Statement
+## Problem
 Anayaa.AI solves the problem of getting thoughtful, grounded guidance for moral and life dilemmas without relying on generic, unsupported chatbot advice. 
 Many people ask AI systems questions like “Should I lie to avoid hurting someone?”, “How do I handle anxiety?”, or “Is this business decision ethical?” A normal chatbot may answer fluently, but it can hallucinate, ignore cultural or spiritual grounding, expose private dilemmas to cloud systems, or give advice without evidence. Anayaa focuses on this gap: it gives guidance that is scripture-grounded, privacy-conscious, auditable, and locally runnable.
 This is important because moral guidance is sensitive. Users need more than fast answers; they need answers that are calm, explainable, relevant to the actual dilemma, and supported by trusted texts. Anayaa makes the reasoning process safer by retrieving scripture evidence, checking whether the answer is grounded, and showing only user-facing guidance rather than internal agent logs.
@@ -15,15 +15,15 @@ Multi-agentic RAG is useful here because the problem is not a single-step “gen
 
 Anayaa uses agents because each step needs a different kind of intelligence:
 
-Query Rewriter: cleans up vague or malformed user questions and frames them as moral questions.
-Optimizer: prepares efficient semantic cache keys and optimized prompts.
-Strategic Planner Agent: identifies important concepts such as duty, truth, restraint, compassion, anxiety, greed, or discipline.
-ReAct Reasoner: checks whether the first retrieval pass is good enough and can retry with better search concepts.
-MCP Retriever Tool Agent: searches scripture through a controlled tool boundary using Milvus hybrid search, graph expansion, and reranking.
-Human-in-the-loop Review: in Interactive Guidance mode, the user can approve concepts, select scripture candidates, or manually add scripture before synthesis.
-Synthesizer Agent: creates the final guidance in sections: Summary, Reflection, Judgement, Next step, and Scripture grounding.
-G-Eval / Audit Agent: checks faithfulness, grounding, relevance, harmlessness, privacy, dharma alignment and displays Sustainable Computing metrics and information
-Finalizer: returns complete guidance, an approval checkpoint, or a clear failure message if retrieval or synthesis is not safe enough.
+- Query Rewriter: cleans up vague or malformed user questions and frames them as moral questions.
+- Optimizer: prepares efficient semantic cache keys and optimized prompts.
+- Strategic Planner Agent: identifies important concepts such as duty, truth, restraint, compassion, anxiety, greed, or discipline.
+- ReAct Reasoner: checks whether the first retrieval pass is good enough and can retry with better search concepts.
+- MCP Retriever Tool Agent: searches scripture through a controlled tool boundary using Milvus hybrid search, graph expansion, and reranking.
+- Human-in-the-loop Review: in Interactive Guidance mode, the user can approve concepts, select scripture candidates, or manually add scripture before synthesis.
+- Synthesizer Agent: creates the final guidance in sections: Summary, Reflection, Judgement, Next step, and Scripture grounding.
+- G-Eval / Audit Agent: checks faithfulness, grounding, relevance, harmlessness, privacy, dharma alignment and displays Sustainable Computing metrics and information
+- Finalizer: returns complete guidance, an approval checkpoint, or a clear failure message if retrieval or synthesis is not safe enough.
 
 Agents uniquely help because moral guidance needs controlled collaboration between reasoning, retrieval, human review, synthesis, and auditing. A single LLM call cannot reliably do all of that with the same safety and traceability.
 
