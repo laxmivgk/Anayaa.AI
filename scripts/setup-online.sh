@@ -5,10 +5,55 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
+VENV_DIR="$BACKEND/anayaa"
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 
 log() { echo "[anayaa-online-setup] $*"; }
 warn() { echo "[anayaa-online-setup] WARNING: $*" >&2; }
+
+require_online() {
+  log "Checking internet access for dependency and model setup..."
+  if command -v curl >/dev/null 2>&1 \
+    && curl -fsI --connect-timeout 5 https://pypi.org/simple/fastapi/ >/dev/null 2>&1; then
+    return 0
+  fi
+
+  echo "[anayaa-online-setup] ERROR: Online setup requires internet access." >&2
+  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ./scripts/setup-online.sh" >&2
+  echo "[anayaa-online-setup] This step installs Python/npm dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
+  exit 1
+}
+
+require_local_socket_support() {
+  log "Checking local socket support for Milvus Lite..."
+  if python3 - <<'PY'
+import os
+import socket
+import sys
+from pathlib import Path
+
+sock_path = Path("/tmp/anayaa-ml.sock")
+try:
+    if sock_path.exists():
+        sock_path.unlink()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(sock_path))
+    sock.close()
+    sock_path.unlink()
+except OSError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    return 0
+  fi
+
+  echo "[anayaa-online-setup] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
+  echo "[anayaa-online-setup] Milvus Lite needs local socket permissions to seed backend/data/milvus.db." >&2
+  echo "[anayaa-online-setup] Run this command from a normal macOS Terminal window, not a restricted/sandboxed shell:" >&2
+  echo "[anayaa-online-setup]   cd \"$ROOT\" && ./scripts/setup-online.sh" >&2
+  exit 1
+}
 
 ensure_env() {
   if [[ ! -f "$BACKEND/.env" ]]; then
@@ -35,6 +80,22 @@ replace_env_line() {
 
 normalize_env() {
   replace_env_line "OFFLINE_MODE" "true"
+
+  if grep -q '^MILVUS_URI=' "$BACKEND/.env" && ! grep -q '^ANAYAA_MILVUS_URI=' "$BACKEND/.env"; then
+    local val
+    val="$(grep '^MILVUS_URI=' "$BACKEND/.env" | head -1 | cut -d= -f2-)"
+    replace_env_line "ANAYAA_MILVUS_URI" "$val"
+    log "Copied MILVUS_URI -> ANAYAA_MILVUS_URI"
+  fi
+
+  if grep -q '^MILVUS_URI=' "$BACKEND/.env"; then
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      sed -i '' '/^MILVUS_URI=/d' "$BACKEND/.env"
+    else
+      sed -i '/^MILVUS_URI=/d' "$BACKEND/.env"
+    fi
+    log "Removed MILVUS_URI from backend/.env; use ANAYAA_MILVUS_URI for Anayaa Milvus Lite"
+  fi
 
   if grep -q '^OLLAMA_BASE_URL=http://localhost:11434$' "$BACKEND/.env"; then
     replace_env_line "OLLAMA_BASE_URL" "http://127.0.0.1:11434"
@@ -70,12 +131,12 @@ ensure_jwt_secret() {
 
 ensure_backend_deps() {
   cd "$BACKEND"
-  if [[ ! -d .venv ]]; then
-    log "Creating Python virtual environment..."
-    python3 -m venv .venv
+  if [[ ! -d "$VENV_DIR" ]]; then
+    log "Creating Python virtual environment at backend/anayaa..."
+    python3 -m venv "$VENV_DIR"
   fi
   log "Installing backend Python dependencies..."
-  .venv/bin/python -m pip install -r requirements.txt
+  "$VENV_DIR/bin/python" -m pip install -r requirements.txt
 }
 
 ensure_frontend_deps() {
@@ -120,18 +181,22 @@ ensure_ollama_models() {
 
 cache_embedding_model() {
   cd "$BACKEND"
+  unset MILVUS_URI
   log "Caching embedding model for later OFFLINE_MODE=true runtime..."
-  OFFLINE_MODE=false .venv/bin/python scripts/cache_runtime_assets.py
+  OFFLINE_MODE=false "$VENV_DIR/bin/python" scripts/cache_runtime_assets.py
 }
 
 seed_retrieval() {
   cd "$BACKEND"
+  unset MILVUS_URI
   log "Seeding PostgreSQL and Milvus Lite scripture data..."
-  OFFLINE_MODE=false .venv/bin/python scripts/seed_milvus.py
+  OFFLINE_MODE=false "$VENV_DIR/bin/python" scripts/seed_milvus.py
 }
 
 main() {
   log "Starting online setup. Keep Wi-Fi on for this step."
+  require_online
+  require_local_socket_support
   ensure_env
   normalize_env
   ensure_jwt_secret

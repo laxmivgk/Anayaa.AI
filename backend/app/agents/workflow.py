@@ -58,6 +58,7 @@ REWRITE_REPLACEMENTS = {
 >>>>>>> main
 }
 
+# These deterministic term sets keep broad or typo-heavy dilemmas retrievable without inventing facts.
 PLANNER_STOPWORDS = {
     "about",
     "after",
@@ -115,6 +116,10 @@ PLANNER_PRIORITY_TERMS = {
     "betrayal",
     "betrayed",
     "business",
+    "care",
+    "caregiving",
+    "child",
+    "children",
     "company",
     "compassion",
     "conflict",
@@ -128,21 +133,28 @@ PLANNER_PRIORITY_TERMS = {
     "financially",
     "forgive",
     "forgiveness",
+    "family",
     "honest",
+    "help",
     "integrity",
     "identity",
     "job",
     "jobs",
+    "kids",
     "lie",
     "livelihood",
     "need",
     "needs",
     "partner",
+    "parent",
+    "parents",
     "path",
+    "peace",
     "purpose",
     "random",
     "randomly",
     "relationship",
+    "responsibility",
     "revenge",
     "self",
     "soul",
@@ -151,6 +163,12 @@ PLANNER_PRIORITY_TERMS = {
     "survive",
     "truth",
     "wealth",
+}
+
+PLANNER_TOKEN_ALIASES = {
+    "duties": "duty",
+    "relationships": "relationship",
+    "responsibilities": "responsibility",
 }
 
 MORAL_REWRITE_TERMS = {
@@ -172,8 +190,10 @@ MORAL_REWRITE_TERMS = {
     "honest",
     "hurt",
     "identity",
+    "kids",
     "lied",
     "lying",
+    "parents",
     "path",
     "purpose",
     "relationship",
@@ -207,6 +227,19 @@ EXISTENTIAL_IDENTITY_DHARMA_QUERY = (
     "how should I understand my identity, self, soul, duty, authentic path, purpose, and right action?"
 )
 
+TERSE_COMPETING_DUTY_DILEMMA_QUERY = (
+    "I am asking a dharma dilemma about this terse user-provided choice: {query}. "
+    "The situation may involve competing duties, relationships, values, needs, or responsibilities. "
+    "Without assuming missing facts about urgency, safety, health, dependency, money, "
+    "or who needs help most, how should I understand the wisest, kindest, most truthful, "
+    "and least harmful next step?"
+)
+
+TERSE_CHOICE_CONNECTOR = re.compile(
+    r"\b(?:or|versus|vs\.?|between|choose|choosing|balance|balancing)\b",
+    re.I,
+)
+
 DHARMA_DILEMMA_FRAME = (
     "I am asking a dharma dilemma about this user-provided situation: {query}. "
     "Without inventing missing facts, what is the wisest, kindest, most truthful, "
@@ -236,11 +269,11 @@ async def load_feedback_records(pg) -> list[dict[str, Any]]:
 
 
 def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
-    tokens = [
-        w
-        for w in re.sub(r"[^\w\s]", " ", text.lower()).split()
-        if (len(w) > 4 or w in PLANNER_PRIORITY_TERMS) and w not in PLANNER_STOPWORDS
-    ]
+    tokens = []
+    for word in re.sub(r"[^\w\s]", " ", text.lower()).split():
+        normalized = PLANNER_TOKEN_ALIASES.get(word, word)
+        if (len(normalized) > 4 or normalized in PLANNER_PRIORITY_TERMS) and normalized not in PLANNER_STOPWORDS:
+            tokens.append(normalized)
     priority = [w for w in tokens if w in PLANNER_PRIORITY_TERMS]
     remaining = [w for w in tokens if w not in PLANNER_PRIORITY_TERMS]
     return list(dict.fromkeys([*priority, *remaining]))[:limit]
@@ -600,6 +633,18 @@ def _rewrite_existential_identity_query(query: str) -> str | None:
     return None
 
 
+def _rewrite_terse_competing_duty_query(query: str) -> str | None:
+    normalized = re.sub(r"\s+", " ", query).strip(" \t\n\r\"'")
+    if not normalized:
+        return None
+
+    words = re.findall(r"\b[a-zA-Z][a-zA-Z']*\b", normalized)
+    if len(words) > 14 or not TERSE_CHOICE_CONNECTOR.search(normalized):
+        return None
+
+    return TERSE_COMPETING_DUTY_DILEMMA_QUERY.format(query=normalized)
+
+
 def _ensure_dharma_dilemma_frame(query: str) -> str:
     normalized = re.sub(r"\s+", " ", query).strip()
     if not normalized:
@@ -621,6 +666,11 @@ def rewrite_malformed_query(query: str, previous_context: dict[str, Any] | None 
     if identity_rewrite:
         rewritten = identity_rewrite
         applied_rules.append("existential_identity_as_dharma_dilemma")
+
+    competing_duty_rewrite = _rewrite_terse_competing_duty_query(rewritten)
+    if competing_duty_rewrite:
+        rewritten = competing_duty_rewrite
+        applied_rules.append("terse_competing_duty_as_dharma_dilemma")
 
     for pattern, replacement in REWRITE_REPLACEMENTS.items():
         next_value = re.sub(pattern, replacement, rewritten, flags=re.IGNORECASE)
@@ -679,6 +729,7 @@ def _build_sub_queries(dilemma: str, fallback_query: str) -> list[str]:
 
 
 def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "") -> dict[str, Any]:
+    """Prepare a cache-aware, optionally compressed query package for downstream ADK agents."""
     compression = compress_query_prompt(
         question=dilemma,
         context=history_summary,
@@ -709,6 +760,7 @@ def optimize_query(dilemma: str, keywords: list[str], history_summary: str = "")
 
 
 async def evaluate_semantic_cache(redis: RedisCache, cache_key: str) -> dict[str, Any] | None:
+    """Return cached guidance only when its prompt/retrieval/judge/model versions still match."""
     cached = await redis.get_json(f"semantic:{cache_key}")
     if not cached:
         return None
@@ -721,6 +773,7 @@ async def evaluate_semantic_cache(redis: RedisCache, cache_key: str) -> dict[str
 
 
 async def store_semantic_cache(redis: RedisCache, cache_key: str, payload: dict[str, Any]) -> None:
+    """Cache completed guidance briefly; cacheability is decided by the ADK finalizer."""
     await redis.set_json(f"semantic:{cache_key}", payload, ttl_seconds=3600)
 
 

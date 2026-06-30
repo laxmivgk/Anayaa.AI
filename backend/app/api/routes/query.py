@@ -38,6 +38,7 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
     if session_id and not await session_mgr.check_rate_limit(session_id, settings.rate_limit_per_minute):
         raise HTTPException(status_code=429, detail="Rate limit exceeded.")
 
+    # Security gates run before any agent, model, retrieval tool, or persistence path sees the query.
     raw_query = sanitize_query(body.query)
     security = run_security_firewall(raw_query)
     if not security.passed:
@@ -51,6 +52,7 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
             }),
         )
 
+    # The workflow receives scrubbed text so planners and traces avoid direct identifiers.
     scrubbed = scrub_pii(security.sanitized)
     request_id = new_request_id()
     eco = EcoTracker(request_id=request_id)
@@ -64,6 +66,7 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
     )
 
     try:
+        # ADK owns the multi-agent reasoning path; the API layer remains an auth/security boundary.
         result = await execute_unified_workflow(
             scrubbed,
             user["email"],
@@ -110,4 +113,5 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
             result,
         )
 
+    # Final scrub is defensive: generated text and nested metadata are cleaned before leaving the API.
     return scrub_pii_deep(result)

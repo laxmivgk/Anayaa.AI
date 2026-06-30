@@ -68,6 +68,8 @@ logger = logging.getLogger(__name__)
 
 _session_service = InMemorySessionService()
 _runner: Runner | None = None
+
+# Live handles stay out of ADK session state because the session service clones serializable payloads.
 _runtime_contexts: dict[str, dict[str, Any]] = {}
 
 RETRY_PLANNER_SYSTEM_PROMPT = (
@@ -424,6 +426,7 @@ def _react_loop_details(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _execution_plan(payload: dict[str, Any], audit: dict[str, Any] | None = None) -> list[str]:
+    """Build a concise trace that explains the agent path without exposing hidden prompts."""
     audit = audit or payload.get("auditScores") or {}
     return [
         f"Step 0 [Query Rewriter]: applied={payload.get('queryRewriteApplied', False)}",
@@ -437,6 +440,7 @@ def _execution_plan(payload: dict[str, Any], audit: dict[str, Any] | None = None
 
 
 def _is_safe_to_cache(result: dict[str, Any]) -> bool:
+    """Only cache completed, judge-passed, citation-grounded answers."""
     audit = result.get("auditScores") or {}
     grounding_contract = audit.get("groundingContract") or {}
     return (
@@ -494,6 +498,7 @@ def _attach_cache_policy(result: dict[str, Any], cache_key: str | None) -> dict[
 
 @node(name="planner")
 async def planner_node(ctx, node_input) -> dict[str, Any]:
+    """LLM agent: choose moral retrieval concepts and tone from the optimized dilemma."""
     payload = node_input if isinstance(node_input, dict) else {}
     state = ctx.state
     dilemma = payload.get("dilemma") or state.get("dilemma") or _content_text(node_input)
@@ -525,6 +530,7 @@ async def planner_node(ctx, node_input) -> dict[str, Any]:
 
 @node(name="optimizer")
 async def optimizer_node(ctx, node_input: Any) -> dict[str, Any]:
+    """Deterministic agent: prepare compression, subqueries, and cache metadata before planning."""
     payload = node_input if isinstance(node_input, dict) else {}
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     optimizer = ctx.state.get("optimizer_preview")
@@ -1241,6 +1247,7 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_workflow() -> Workflow:
+    """The ADK edge order is the runtime source of truth for agent execution."""
     return Workflow(
         name="anayaa_dharma_workflow",
         description="Bounded ReAct dharma guidance with MCP Milvus retrieval and LLM synthesis",
@@ -1313,6 +1320,8 @@ async def run_adk_pipeline(
     request_id = str(eco.request_id)
     latency = AgentLatencyTracker(request_id=request_id)
     eco.track_stage("SanitizeGate")
+
+    # Pre-ADK rewrite/cache preview lets direct guidance return safely from cache when HITL is off.
     with latency.track("QueryRewriter", category="deterministic"):
         rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
     rewritten_dilemma = rewrite["rewrittenQuery"]

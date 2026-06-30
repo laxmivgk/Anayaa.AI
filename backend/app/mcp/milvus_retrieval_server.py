@@ -1,6 +1,7 @@
 """MCP stdio server — Milvus hybrid search, graph expansion, and reranking."""
 from __future__ import annotations
 
+import atexit
 import logging
 import sys
 from pathlib import Path
@@ -21,7 +22,21 @@ mcp = FastMCP("anayaa-milvus-retrieval")
 _store: MilvusStore | None = None
 
 
+def _cleanup_store() -> None:
+    global _store
+    if _store is not None:
+        try:
+            logger.info("Cleaning up and closing MilvusStore connection...")
+            _store.close()
+        except Exception as exc:
+            logger.warning("Error closing MilvusStore at process exit: %s", exc)
+
+
+atexit.register(_cleanup_store)
+
+
 def _get_store() -> MilvusStore:
+    """Lazy-load the seeded local Milvus store when the first MCP tool call arrives."""
     global _store
     if _store is None:
         settings = get_settings()

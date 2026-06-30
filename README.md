@@ -1,15 +1,61 @@
+
+# Anayaa.AI - Kaggle Capstone Submission for Agents for Good
+## License & AI Safety Notice
+
+This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE) per Kaggle Capstone requirements.
+
+However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
+
 # Anayaa.AI
+ Anayaa.AI is a local-first, eco-friendly scripture-grounded guidance app for moral and life dilemmas. By implementing edge-optimization parameters Anayaa slashes single-query energy costs to a fraction of a watt-hour (~0.06g CO₂e).
 
-Anayaa.AI is a local-first scripture-grounded guidance app for moral and life dilemmas. It accepts a user's question, sanitizes and rewrites the query when needed, retrieves scripture evidence through an MCP and Milvus boundary, generates guidance with local LLMs, audits the result for faithfulness and safety, and tracks request-level eco metrics.
+## Problem
+Anayaa.AI solves the problem of getting thoughtful, grounded guidance for moral and life dilemmas without relying on generic, unsupported chatbot advice. 
+Many people ask AI systems questions like “Should I lie to avoid hurting someone?”, “How do I handle anxiety?”, or “Is this business decision ethical?” A normal chatbot may answer fluently, but it can hallucinate, ignore cultural or spiritual grounding, expose private dilemmas to cloud systems, or give advice without evidence. Anayaa focuses on this gap: it gives guidance that is scripture-grounded, privacy-conscious, auditable, and locally runnable.
+This is important because moral guidance is sensitive. Users need more than fast answers; they need answers that are calm, explainable, relevant to the actual dilemma, and supported by trusted texts. Anayaa makes the reasoning process safer by retrieving scripture evidence, checking whether the answer is grounded, and showing only user-facing guidance rather than internal agent logs.
 
-The project is built for local development without Docker.
+## Solution
+
+Multi-agentic RAG is useful here because the problem is not a single-step “generate an answer” task. Anayaa has to understand the dilemma, decide what moral concepts matter, retrieve relevant scripture, recover if retrieval is weak, optionally let the user review the evidence, synthesize the final guidance, and audit the result.
+
+Anayaa uses agents because each step needs a different kind of intelligence:
+
+- Query Rewriter: cleans up vague or malformed user questions and frames them as moral questions.
+- Optimizer: prepares efficient semantic cache keys and optimized prompts.
+- Strategic Planner Agent: identifies important concepts such as duty, truth, restraint, compassion, anxiety, greed, or discipline.
+- ReAct Reasoner: checks whether the first retrieval pass is good enough and can retry with better search concepts.
+- MCP Retriever Tool Agent: searches scripture through a controlled tool boundary using Milvus hybrid search, graph expansion, and reranking.
+- Human-in-the-loop Review: in Interactive Guidance mode, the user can approve concepts, select scripture candidates, or manually add scripture before synthesis.
+- Synthesizer Agent: creates the final guidance in sections: Summary, Reflection, Judgement, Next step, and Scripture grounding.
+- G-Eval / Audit Agent: checks faithfulness, grounding, relevance, harmlessness, privacy, dharma alignment and displays Sustainable Computing metrics and information
+- Finalizer: returns complete guidance, an approval checkpoint, or a clear failure message if retrieval or synthesis is not safe enough.
+
+Agents uniquely help because moral guidance needs controlled collaboration between reasoning, retrieval, human review, synthesis, and auditing. A single LLM call cannot reliably do all of that with the same safety and traceability.
+
+The project is built for local use with limited resources.
+
+CodeCarbon Real-Time Audit (Sustainable Computing)
+Anayaa promotes eco-conscious and green computing:
+Environmental Impact Tracking: Displays real-time metrics showing the cumulative carbon footprint (in kilograms) and total edge compute energy consumed (in Watt-hours) during local model execution. Per request metrics can be viewed in the Eco Audit tab.
+Power Draft Monitoring: Shows active CPU/GPU power consumption levels to highlight the efficiency benefits of lightweight, quantized on-device architectures.
 
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
-- Retrieval: scripture JSON corpus, sentence-transformer embeddings, Milvus hybrid search, graph expansion, reranking
+- Retrieval: scripture JSON corpus, ONNX local embeddings, Milvus hybrid search, graph expansion, reranking
 - Safety: sanitizer, regex firewall, PII scrubber, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
 - Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, local reset-code flow
 - Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
+
+
+
+<img width="1899" height="987" alt="image" src="https://github.com/user-attachments/assets/99f1f747-54ac-4813-8e7e-b1cd63812151" />
+<img width="1124" height="1029" alt="image" src="https://github.com/user-attachments/assets/ad338070-759d-4af5-a44f-b3c32165b0eb" />
+<img width="1127" height="1034" alt="image" src="https://github.com/user-attachments/assets/1581e3fd-b63e-4b6b-8e91-ab2e2cae4c74" />
+<img width="829" height="1031" alt="image" src="https://github.com/user-attachments/assets/8f809b28-650b-4cc3-98ac-2d94ab7e11e2" />
+
+
+
+
 
 ## Current Experience
 
@@ -72,7 +118,35 @@ FastAPI backend
     |-- PostgreSQL persistence
     |-- Redis semantic cache and session state
 ```
+```mermaid
+flowchart TD
+    A["React + Vite Frontend"] --> B["FastAPI Backend API"]
 
+    B --> C["Auth: PostgreSQL Users + JWT Sessions"]
+    B --> D["Security Layer: Sanitizer + Regex Firewall + PII Scrubber"]
+    D --> E["Query Rewriter + Optimizer"]
+    E --> F["Planner Agent"]
+
+    F --> G["Bounded ReAct Reasoner"]
+    G --> H["MCP Retrieval Client"]
+    H --> I["MCP Stdio Retrieval Server"]
+
+    I --> J["Milvus Lite Vector Store"]
+    I --> K["Scripture Corpus JSON"]
+    I --> L["Graph Expansion + Reranking"]
+
+    L --> M{"Interactive Guidance?"}
+    M -->|Yes| N["Human Review: Concepts + Scripture Selection"]
+    M -->|No| O["Synthesizer Agent"]
+
+    N --> O
+    O --> P["G-Eval Judge + Deterministic Grounding Checks"]
+    P --> Q["Finalizer"]
+    Q --> R["User-Facing Guidance UI"]
+
+    B --> S["Redis Cache + Rate Limits"]
+    B --> T["Eco Metrics + Audit Logs"]
+```
 Runtime retrieval goes through the MCP tool boundary. The FastAPI request path does not open `MilvusStore` directly for retrieval. The MCP client allowlists only:
 
 - `milvus_hybrid_search`
@@ -99,7 +173,7 @@ For interactive compile, the judge evaluates the final answer against the rewrit
 
 Each API query is currently single-turn. The backend does not pass previous conversation context into retrieval or synthesis while multi-turn support is disabled.
 
-Planner and synthesizer failures are surfaced as explicit workflow statuses instead of silently falling back to deterministic answers. This keeps testing honest when a local model is unavailable, returns invalid JSON, or produces a draft that fails the guidance contract.
+Planner and synthesizer failures are surfaced as explicit workflow statuses instead of silently falling back to deterministic answers. This keeps the system honest when a local model is unavailable, returns invalid JSON, or produces a draft that fails the guidance contract.
 
 ## G-Eval Audit
 
@@ -157,11 +231,18 @@ The UI keeps this user-facing:
 - Ollama installed locally
 - Enough disk space for local Python packages, embedding assets, Milvus Lite data, and Ollama models
 
+# Verify installation
+python3 --version
+node --version
+pg_isready -h 127.0.0.1 -p 5432
+redis-cli ping
+ollama --version
+
 The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127.0.0.1:6379/0`, and Ollama at `http://127.0.0.1:11434` unless overridden in `backend/.env`.
 
 ## Local Setup
 
-Run the one-time online setup first. Keep internet access on for this step because it installs dependencies, pulls local models, caches embedding assets, and seeds retrieval.
+Run the one-time online setup first. Keep internet access on for this step because it installs Python/npm dependencies, pulls local models, caches and exports ONNX embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/free-resources.sh --storage` or `./scripts/free-resources.sh --all --yes`, because those options remove local retrieval storage and `--all` also removes dependency folders.
 
 ```bash
 ./scripts/setup_postgres.sh
@@ -183,6 +264,14 @@ Open:
 - Deep health: `http://localhost:8000/api/health/deep`
 
 `scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000.
+
+With `OFFLINE_MODE=true`, backend startup does not install missing Python packages from the internet. It uses the existing `backend/anayaa` virtual environment created by `./scripts/setup-online.sh`. If you ran `./scripts/free-resources.sh --all --yes`, reconnect to Wi-Fi and run `./scripts/setup-online.sh` before starting the backend again.
+
+Milvus Lite must be able to bind a local Unix socket while seeding and serving `backend/data/milvus.db`. Run setup and backend startup from a normal macOS Terminal window. Restricted or sandboxed shells can fail with `Operation not permitted` or `Fail connecting to server on unix:...milvus.db.sock`.
+
+Milvus seeding is idempotent. If the Milvus collection already has vectors, backend startup skips reloading scripture embeddings. If the collection is empty, startup runs `backend/scripts/seed_milvus.py`. In normal offline runtime this works only if the embedding model was already cached by `./scripts/setup-online.sh`; if the cache is missing, `scripts/start-backend.sh` stops with a clear message telling you to reconnect to Wi-Fi and run `./scripts/setup-online.sh`.
+
+`backend/scripts/seed_milvus.py` itself does not perform full online setup. It upserts scripture rows into PostgreSQL, avoids duplicate graph edges, and seeds or recreates Milvus vectors when the stored vector count does not match the local scripture corpus. Dependency installation, Hugging Face embedding downloads, Ollama model pulls, and first-time cache warming belong to `./scripts/setup-online.sh`.
 
 The startup scripts expect these local Ollama models:
 
@@ -221,7 +310,9 @@ The main local settings live in `backend/.env`.
 | `ANAYAA_MILVUS_URI` | `data/milvus.db` | Milvus Lite path or standalone Milvus URI |
 | `MILVUS_COLLECTION` | `scripture_verses` | Vector collection name |
 | `OFFLINE_MODE` | `true` | Uses cached local assets after setup |
-| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Embedding model |
+| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Source embedding model exported during setup |
+| `EMBEDDING_BACKEND` | `onnx` | Uses exported ONNX embeddings at runtime |
+| `EMBEDDING_ONNX_DIR` | `data/onnx_embeddings` | Local generated ONNX embedding assets |
 | `CROSS_ENCODER_ENABLED` | `false` | Optional reranker toggle |
 | `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama endpoint |
@@ -351,7 +442,7 @@ Useful targeted checks while developing:
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/test_llm_strategic_planner.py tests/test_llm_react_retry_planner.py tests/test_guidance_section_contract.py tests/test_grounding_contract.py tests/test_guidance_reasons.py tests/test_hitl_compile_audit_query.py
+anayaa/bin/python -m pytest tests/test_llm_strategic_planner.py tests/test_llm_react_retry_planner.py tests/test_guidance_section_contract.py tests/test_grounding_contract.py tests/test_guidance_reasons.py tests/test_hitl_compile_audit_query.py
 ```
 
 ```bash
@@ -367,10 +458,26 @@ Free common local development resources:
 ./scripts/free-resources.sh
 ```
 
+The cleanup script is intentionally tracked in git. It removes ignored/generated local artifacts such as Python caches, `.pytest_cache`, `.DS_Store`, Vite cache, `frontend/dist`, local startup logs, and orphaned Anayaa backend/frontend/MCP processes.
+
+Use stronger cleanup only when you really want to reclaim more local resources:
+
+```bash
+./scripts/free-resources.sh --all --yes
+```
+
+`--all` enables `--services`, `--storage`, and `--deps`. That can stop shared local PostgreSQL, Redis, Ollama, and Milvus ports; wipe Anayaa Redis/PostgreSQL app data; remove the local Milvus Lite DB; and delete dependency folders such as `backend/anayaa`, legacy local virtualenv folders, and `frontend/node_modules`. After `--storage` or `--all`, reconnect to Wi-Fi and run setup/startup again so dependencies, cached assets, and retrieval data are restored:
+
+```bash
+./scripts/setup-online.sh
+./scripts/start-backend.sh
+./scripts/start-frontend.sh
+```
+
 Run load tests:
 
 ```bash
-export ANAYAA_LOAD_TEST_EMAIL="codex.test@example.com"
+export ANAYAA_LOAD_TEST_EMAIL="code.test@example.com"
 export ANAYAA_LOAD_TEST_PASSWORD="the-password-for-the-load-test-user"
 ./scripts/run-load-test.sh
 ```
@@ -391,20 +498,3 @@ Review a single request path quickly by logging in, sending a query to `/api/que
 - `auditScores`
 - `auditScores.groundingContract`
 - `cacheHit`
-
-## Production Notes
-
-The repository is configured for local development. Before production deployment, harden the following:
-
-- Store `JWT_SECRET` and database credentials in a secret manager.
-- Keep login passwords out of environment variables; store only password hashes or use a production auth provider.
-- Replace terminal-printed password reset codes with an email provider or managed auth flow before production use.
-- Use HTTPS only.
-- Replace localhost CORS with the deployed frontend origin.
-- Review browser token storage and cookie/session strategy.
-- Use managed or hardened PostgreSQL, Redis, and vector storage.
-- Disable development reload behavior.
-- Configure observability, backups, retention, and alerting.
-- Treat optional cloud LLM routing as a privacy-sensitive integration.
-
-Local defaults such as localhost CORS, generated dev secrets, and local JWT storage are development conveniences, not production security guidance.

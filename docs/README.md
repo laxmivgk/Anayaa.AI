@@ -69,7 +69,7 @@ Observed local versions:
 
 | Software | Version | Purpose |
 | --- | --- | --- |
-| Python | 3.10.5 in `backend/.venv` | Backend runtime |
+| Python | 3.10.5 in `backend/anayaa` | Backend runtime |
 | Node.js | 25.9.0 | Frontend tooling |
 | npm | 11.12.1 | Frontend package manager |
 | Ollama | client 0.30.10 | Local LLM runtime |
@@ -126,8 +126,8 @@ Install backend and frontend dependencies:
 
 ```bash
 cd backend
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
+python3 -m venv anayaa
+anayaa/bin/python -m pip install -r requirements.txt
 
 cd ../frontend
 npm install
@@ -169,7 +169,7 @@ Run the one-time online setup while Wi-Fi is available:
 ./scripts/setup-online.sh
 ```
 
-This intentionally downloads and caches Python packages, npm packages, Ollama models, and the configured Hugging Face embedding model, then seeds scripture data into PostgreSQL and Milvus Lite. After this step, runtime should work without Wi-Fi with `OFFLINE_MODE=true`.
+This intentionally downloads and caches Python packages, npm packages, Ollama models, and the configured Hugging Face embedding model, exports the embedding model to ONNX, then seeds scripture data into PostgreSQL and Milvus Lite. After this step, runtime should work without Wi-Fi with `OFFLINE_MODE=true`.
 
 The convenience backend script can also create `.env`, generate a local JWT secret, install backend dependencies, check Ollama models, check PostgreSQL and Redis, and seed Milvus when empty:
 
@@ -220,8 +220,8 @@ Useful verification commands:
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests
-.venv/bin/python -m compileall app tests
+anayaa/bin/python -m pytest tests
+anayaa/bin/python -m compileall app tests
 
 cd ../frontend
 npm run build
@@ -231,7 +231,7 @@ Golden-metric evaluation can be run against saved prediction JSONL:
 
 ```bash
 cd backend
-.venv/bin/python scripts/evaluate_golden_metrics.py /path/to/predictions.jsonl --k 3
+anayaa/bin/python scripts/evaluate_golden_metrics.py /path/to/predictions.jsonl --k 3
 ```
 
 Each prediction row should include:
@@ -313,8 +313,8 @@ After `--storage`, reseed data before querying again:
 
 - `scripts/start-backend.sh` may create or modify `backend/.env`.
 - `scripts/start-backend.sh` auto-generates a local `JWT_SECRET` if the placeholder is unsafe.
-- `scripts/setup-online.sh` is the intentional Wi-Fi step. It can download Python dependencies, npm dependencies, Ollama models, and Hugging Face embedding model files.
-- Runtime is intended to work without Wi-Fi after setup. `OFFLINE_MODE=true` forces embedding models to load from local cache and fail clearly if they were not downloaded yet.
+- `scripts/setup-online.sh` is the intentional Wi-Fi step. It can download Python dependencies, npm dependencies, Ollama models, Hugging Face embedding model files, and export the local embedding runtime to ONNX.
+- Runtime is intended to work without Wi-Fi after setup. `OFFLINE_MODE=true` and `EMBEDDING_BACKEND=onnx` force embeddings to load from generated local ONNX assets and fail clearly if setup did not create them yet.
 - `backend/scripts/seed_milvus.py` writes scripture rows to PostgreSQL and embeddings to `backend/data/milvus.db`.
 - Redis stores sessions, rate limits, and semantic cache entries.
 - PostgreSQL stores turns, audit logs, HITL checkpoints, feedback, eco metrics, and scripture seed state.

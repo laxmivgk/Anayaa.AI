@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Any
 
@@ -33,19 +34,38 @@ class MilvusStore:
         return str(path)
 
     def connect(self) -> bool:
-        try:
-            from pymilvus import MilvusClient
+        from pymilvus import MilvusClient
 
-            uri = self._resolve_uri()
-            self._client = MilvusClient(uri=uri)
-            self.available = True
-            if self._client.has_collection(self.collection_name):
-                self.hybrid_enabled = self._detect_hybrid_support()
-            return True
-        except Exception as exc:
-            self._client = None
-            self.available = False
-            raise RuntimeError(f"Milvus is required but unavailable at {self.uri}.") from exc
+        uri = self._resolve_uri()
+        is_lite = self.uri.endswith(".db")
+        attempts = 3 if is_lite else 1
+        last_error: Exception | None = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                self._client = MilvusClient(uri=uri)
+                self.available = True
+                if self._client.has_collection(self.collection_name):
+                    self.hybrid_enabled = self._detect_hybrid_support()
+                return True
+            except Exception as exc:
+                self._client = None
+                self.available = False
+                last_error = exc
+                if is_lite:
+                    self._release_lite_server(uri)
+                if attempt < attempts:
+                    logger.warning(
+                        "Milvus Lite connection failed on attempt %s/%s; retrying: %s",
+                        attempt,
+                        attempts,
+                        exc,
+                    )
+                    time.sleep(1)
+
+        if is_lite:
+            self._release_lite_server(uri)
+        raise RuntimeError(f"Milvus is required but unavailable at {self.uri}.") from last_error
 
     def close(self) -> None:
         resolved_uri = self._resolve_uri() if self.uri.endswith(".db") else None
@@ -55,14 +75,17 @@ class MilvusStore:
             except Exception:
                 pass
         if resolved_uri:
-            try:
-                from milvus_lite.server_manager import server_manager_instance
-
-                server_manager_instance.release_server(resolved_uri)
-            except Exception:
-                pass
+            self._release_lite_server(resolved_uri)
         self._client = None
         self.available = False
+
+    def _release_lite_server(self, resolved_uri: str) -> None:
+        try:
+            from milvus_lite.server_manager import server_manager_instance
+
+            server_manager_instance.release_server(resolved_uri)
+        except Exception:
+            pass
 
     def ensure_collection(self, dim: int, recreate: bool = False) -> None:
         if not self._client:
