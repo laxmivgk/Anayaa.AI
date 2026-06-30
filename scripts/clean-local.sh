@@ -14,7 +14,7 @@ Default cleanup:
   - Vite cache under frontend/node_modules/.vite
 
 Options:
-  --deps    Also remove backend/.venv and frontend/node_modules
+  --deps    Also remove backend/anayaa and frontend/node_modules
   --data    Also remove backend/data/milvus.db and local Ollama startup log
   --yes     Do not prompt before --data cleanup
   --help    Show this help
@@ -45,6 +45,7 @@ rm -rf "$ROOT/frontend/node_modules/.vite"
 
 if [[ "$REMOVE_DEPS" == true ]]; then
   log "Removing dependency folders..."
+  rm -rf "$ROOT/backend/anayaa"
   rm -rf "$ROOT/backend/.venv"
   rm -rf "$ROOT/frontend/node_modules"
 fi

@@ -21,3 +21,4 @@ frontend/dist/
 frontend/.vite/
 backend/data/milvus.db
 backend/data/milvus.db-*
+backend/data/onnx_embeddings/

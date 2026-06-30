@@ -30,6 +30,7 @@ def cache_versions() -> dict[str, Any]:
 
 
 def build_semantic_cache_key(dilemma: str, keywords: list[str]) -> tuple[str, dict[str, Any]]:
+    """Hash the semantic inputs plus version stamps so old model/prompt behavior cannot resurface."""
     versions = cache_versions()
     normalized_keywords = [str(keyword).strip().lower() for keyword in keywords if str(keyword).strip()]
     key_payload = {

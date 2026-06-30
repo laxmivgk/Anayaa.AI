@@ -9,8 +9,8 @@ python3 -m compileall backend/app backend/tests
 
 echo "[pre-merge] Backend unit tests"
 cd "$ROOT_DIR/backend"
-if [[ -x ".venv/bin/python" ]]; then
-  .venv/bin/python -m pytest tests
+if [[ -x "anayaa/bin/python" ]]; then
+  anayaa/bin/python -m pytest tests
 else
   python3 -m pytest tests
 fi

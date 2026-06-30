@@ -98,6 +98,7 @@ FOCUS_TERM_ALIASES = {
 
 
 def _active_ollama_warmup_models() -> list[str]:
+    """Warm only the active local models so first-query latency is less surprising."""
     models: list[str] = []
     for task in ["planner", "synthesizer", "judge"]:
         model = select_model(task)
@@ -214,6 +215,7 @@ def _build_synthesis_prompt(
     citations: list[dict[str, Any]],
     tone_msg: str,
 ) -> str:
+    """Constrain synthesis to the dilemma and retrieved citations so guidance stays grounded."""
     dilemma = _visible_dilemma_text(dilemma)
     citation_lines = []
     anchor_lines = []

@@ -23,6 +23,7 @@ class EcoTracker:
     stages: list[StageMetrics] = field(default_factory=list)
 
     def audit_power_footprint(self, cache_hit: bool, confidence: float) -> dict[str, Any]:
+        """Estimate local edge energy/CO2 for demo observability, not certified hardware metering."""
         base_cpu = 4.2
         base_gpu = 12.8
         if cache_hit:
@@ -45,6 +46,7 @@ class EcoTracker:
         }
 
     def track_stage(self, stage: str, cache_hit: bool = False, confidence: float = 80.0) -> StageMetrics:
+        """Record a coarse per-stage footprint so the UI can show where local compute was spent."""
         start = time.perf_counter()
         cpu_before = psutil.cpu_percent(interval=0.05)
         metrics = self.audit_power_footprint(cache_hit, confidence)

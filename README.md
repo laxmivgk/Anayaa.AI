@@ -1,8 +1,13 @@
 
 # Anayaa.AI - Kaggle Capstone Submission for Agents for Good
+## License & AI Safety Notice
 
-# Anayaa.AI 
- Anayaa.AI is a local-first, eco-friendly scripture-grounded guidance app for moral and life dilemmas. Anayaa is an eco-friendly decision support system engineered from the ground up to minimize its physical footprint on our planet. By implementing edge-optimization parametersAnayaa slashes single-query energy costs to a fraction of a watt-hour (~0.06g CO₂e). 
+This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE) per Kaggle Capstone requirements.
+
+However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
+
+# Anayaa.AI
+ Anayaa.AI is a local-first, eco-friendly scripture-grounded guidance app for moral and life dilemmas. By implementing edge-optimization parameters Anayaa slashes single-query energy costs to a fraction of a watt-hour (~0.06g CO₂e).
 
 ## Problem
 Anayaa.AI solves the problem of getting thoughtful, grounded guidance for moral and life dilemmas without relying on generic, unsupported chatbot advice. 
@@ -36,7 +41,7 @@ Power Draft Monitoring: Shows active CPU/GPU power consumption levels to highlig
 
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
-- Retrieval: scripture JSON corpus, sentence-transformer embeddings, Milvus hybrid search, graph expansion, reranking
+- Retrieval: scripture JSON corpus, ONNX local embeddings, Milvus hybrid search, graph expansion, reranking
 - Safety: sanitizer, regex firewall, PII scrubber, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
 - Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, local reset-code flow
 - Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
@@ -237,7 +242,7 @@ The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127
 
 ## Local Setup
 
-Run the one-time online setup first. Keep internet access on for this step because it installs dependencies, pulls local models, caches embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/free-resources.sh --storage` or `./scripts/free-resources.sh --all --yes`, because those options remove local retrieval storage.
+Run the one-time online setup first. Keep internet access on for this step because it installs Python/npm dependencies, pulls local models, caches and exports ONNX embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/free-resources.sh --storage` or `./scripts/free-resources.sh --all --yes`, because those options remove local retrieval storage and `--all` also removes dependency folders.
 
 ```bash
 ./scripts/setup_postgres.sh
@@ -259,6 +264,10 @@ Open:
 - Deep health: `http://localhost:8000/api/health/deep`
 
 `scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000.
+
+With `OFFLINE_MODE=true`, backend startup does not install missing Python packages from the internet. It uses the existing `backend/anayaa` virtual environment created by `./scripts/setup-online.sh`. If you ran `./scripts/free-resources.sh --all --yes`, reconnect to Wi-Fi and run `./scripts/setup-online.sh` before starting the backend again.
+
+Milvus Lite must be able to bind a local Unix socket while seeding and serving `backend/data/milvus.db`. Run setup and backend startup from a normal macOS Terminal window. Restricted or sandboxed shells can fail with `Operation not permitted` or `Fail connecting to server on unix:...milvus.db.sock`.
 
 Milvus seeding is idempotent. If the Milvus collection already has vectors, backend startup skips reloading scripture embeddings. If the collection is empty, startup runs `backend/scripts/seed_milvus.py`. In normal offline runtime this works only if the embedding model was already cached by `./scripts/setup-online.sh`; if the cache is missing, `scripts/start-backend.sh` stops with a clear message telling you to reconnect to Wi-Fi and run `./scripts/setup-online.sh`.
 
@@ -301,7 +310,9 @@ The main local settings live in `backend/.env`.
 | `ANAYAA_MILVUS_URI` | `data/milvus.db` | Milvus Lite path or standalone Milvus URI |
 | `MILVUS_COLLECTION` | `scripture_verses` | Vector collection name |
 | `OFFLINE_MODE` | `true` | Uses cached local assets after setup |
-| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Embedding model |
+| `EMBEDDING_MODEL` | `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` | Source embedding model exported during setup |
+| `EMBEDDING_BACKEND` | `onnx` | Uses exported ONNX embeddings at runtime |
+| `EMBEDDING_ONNX_DIR` | `data/onnx_embeddings` | Local generated ONNX embedding assets |
 | `CROSS_ENCODER_ENABLED` | `false` | Optional reranker toggle |
 | `CROSS_ENCODER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | Cross-encoder model |
 | `OLLAMA_BASE_URL` | `http://127.0.0.1:11434` | Local Ollama endpoint |
@@ -431,7 +442,7 @@ Useful targeted checks while developing:
 
 ```bash
 cd backend
-.venv/bin/python -m pytest tests/test_llm_strategic_planner.py tests/test_llm_react_retry_planner.py tests/test_guidance_section_contract.py tests/test_grounding_contract.py tests/test_guidance_reasons.py tests/test_hitl_compile_audit_query.py
+anayaa/bin/python -m pytest tests/test_llm_strategic_planner.py tests/test_llm_react_retry_planner.py tests/test_guidance_section_contract.py tests/test_grounding_contract.py tests/test_guidance_reasons.py tests/test_hitl_compile_audit_query.py
 ```
 
 ```bash
@@ -455,7 +466,7 @@ Use stronger cleanup only when you really want to reclaim more local resources:
 ./scripts/free-resources.sh --all --yes
 ```
 
-`--all` enables `--services`, `--storage`, and `--deps`. That can stop shared local PostgreSQL, Redis, Ollama, and Milvus ports; wipe Anayaa Redis/PostgreSQL app data; remove the local Milvus Lite DB; and delete dependency folders such as `backend/.venv`, legacy local virtualenv folders, and `frontend/node_modules`. After `--storage` or `--all`, run setup/startup again so retrieval is reseeded:
+`--all` enables `--services`, `--storage`, and `--deps`. That can stop shared local PostgreSQL, Redis, Ollama, and Milvus ports; wipe Anayaa Redis/PostgreSQL app data; remove the local Milvus Lite DB; and delete dependency folders such as `backend/anayaa`, legacy local virtualenv folders, and `frontend/node_modules`. After `--storage` or `--all`, reconnect to Wi-Fi and run setup/startup again so dependencies, cached assets, and retrieval data are restored:
 
 ```bash
 ./scripts/setup-online.sh
@@ -487,11 +498,3 @@ Review a single request path quickly by logging in, sending a query to `/api/que
 - `auditScores`
 - `auditScores.groundingContract`
 - `cacheHit`
-
-
-
-## License & AI Safety Notice
-
-This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE) per Kaggle Capstone requirements. 
-
-However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.

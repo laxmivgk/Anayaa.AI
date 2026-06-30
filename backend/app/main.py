@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     count = len(corpus)
     await pg.execute(
         """
-        UPDATE corpus_status SET ready = TRUE, verse_count = $1, last_seed_at = NOW(), seed_version = 'google_studio_v1'
+        UPDATE corpus_status SET ready = TRUE, verse_count = $1, last_seed_at = NOW(), seed_version = 'scriptures_v1'
         WHERE id = 1
         """,
         count,
@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
             retention_task.cancel()
             with suppress(asyncio.CancelledError):
                 await retention_task
+        from app.mcp.client import close_mcp_client
+        await close_mcp_client()
         await redis.close()
         await pg.close()
 
