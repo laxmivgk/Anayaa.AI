@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass
 
+# Lightweight fail-closed patterns block obvious injection attempts before agents or tools run.
 DANGER_PATTERNS = [
     re.compile(r"<script\b[^<]*(?:(?!</script>)<[^<]*)*</script>", re.I),
     re.compile(r"SELECT\s+.*\s+FROM", re.I),
@@ -31,6 +32,7 @@ def run_security_firewall(input_text: str, max_length: int = 4000) -> Sanitation
         if pattern.search(text):
             violations.append(f"Pattern detected: {pattern.pattern}")
 
+    # Escape HTML-like characters so blocked or echoed text cannot render as markup in clients.
     sanitized = (
         text.replace("&", "&amp;")
         .replace("<", "&lt;")

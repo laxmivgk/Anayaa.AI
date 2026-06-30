@@ -113,16 +113,26 @@ async def main() -> None:
 
     pg = PostgresPool(settings.postgres_dsn)
     await pg.connect()
-    pg_count = await seed_postgres(pg, corpus, checksum)
-    print(f"Seeded {pg_count} verses from google_studio into PostgreSQL (checksum={checksum}).")
+    try:
+        pg_count = await seed_postgres(pg, corpus, checksum)
+        print(f"Seeded {pg_count} verses from the Anayaa scripture corpus into PostgreSQL (checksum={checksum}).")
 
-    if not settings.milvus_enabled:
-        raise RuntimeError("MILVUS_ENABLED must be true. Milvus is required for retrieval.")
-    milvus_count, hybrid = seed_milvus(corpus, force_recreate=False)
-    mode = "HNSW+BM25 hybrid" if hybrid else "dense HNSW"
-    print(f"Seeded {milvus_count} verse embeddings into Milvus ({mode}).")
+        if not settings.milvus_enabled:
+            raise RuntimeError("MILVUS_ENABLED must be true. Milvus is required for retrieval.")
+        try:
+            milvus_count, hybrid = seed_milvus(corpus, force_recreate=False)
+        except RuntimeError as exc:
+            print("[anayaa] ERROR: Milvus Lite could not start or connect for retrieval seeding.", file=sys.stderr)
+            print(f"[anayaa]   {exc}", file=sys.stderr)
+            print("[anayaa]   Close any running Anayaa backend/MCP process, then retry setup.", file=sys.stderr)
+            print("[anayaa]   If you recently cleaned resources, run: ./scripts/free-resources.sh --storage --yes", file=sys.stderr)
+            print("[anayaa]   If the error mentions socket bind or Operation not permitted, run setup from a normal macOS Terminal window.", file=sys.stderr)
+            raise SystemExit(1) from None
+        mode = "HNSW+BM25 hybrid" if hybrid else "dense HNSW"
+        print(f"Seeded {milvus_count} verse embeddings into Milvus ({mode}).")
 
-    await pg.close()
+    finally:
+        await pg.close()
 
 
 if __name__ == "__main__":

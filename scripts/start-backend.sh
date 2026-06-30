@@ -4,9 +4,49 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$ROOT/backend"
+VENV_DIR="$BACKEND/anayaa"
 
 log() { echo "[anayaa] $*"; }
 warn() { echo "[anayaa] WARNING: $*" >&2; }
+
+online_setup_required() {
+  local reason="$1"
+  echo "[anayaa] ERROR: ${reason}" >&2
+  echo "[anayaa] OFFLINE_MODE=true uses only cached local dependencies and model assets." >&2
+  echo "[anayaa] Connect to Wi-Fi and run the one-time setup:" >&2
+  echo "[anayaa]   ./scripts/setup-online.sh" >&2
+  echo "[anayaa] Then start the backend again:" >&2
+  echo "[anayaa]   ./scripts/start-backend.sh" >&2
+}
+
+require_local_socket_support() {
+  if python3 - <<'PY'
+import os
+import socket
+import sys
+from pathlib import Path
+
+sock_path = Path("/tmp/anayaa-ml.sock")
+try:
+    if sock_path.exists():
+        sock_path.unlink()
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(str(sock_path))
+    sock.close()
+    sock_path.unlink()
+except OSError as exc:
+    print(exc, file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    return 0
+  fi
+
+  echo "[anayaa] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
+  echo "[anayaa] Run backend startup from a normal macOS Terminal window, not a restricted/sandboxed shell:" >&2
+  echo "[anayaa]   cd \"$ROOT\" && ./scripts/start-backend.sh" >&2
+  exit 1
+}
 
 migrate_env() {
   local env_file="$BACKEND/.env"
@@ -94,12 +134,47 @@ ensure_jwt_secret() {
 
 ensure_venv() {
   cd "$BACKEND"
-  if [[ ! -d .venv ]]; then
-    log "Creating Python virtual environment..."
-    python3 -m venv .venv
+  if [[ "${OFFLINE_MODE:-true}" == "true" ]]; then
+    if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+      online_setup_required "backend/anayaa is missing. This usually happens after ./scripts/free-resources.sh --all --yes."
+      exit 1
+    fi
+
+    if ! "$VENV_DIR/bin/python" - <<'PY'
+import importlib.util
+import sys
+
+required = [
+    "fastapi",
+    "uvicorn",
+    "redis",
+    "mcp",
+    "pymilvus",
+    "sentence_transformers",
+    "onnxruntime",
+]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+if missing:
+    print(", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+      online_setup_required "backend Python dependencies are not installed completely in backend/anayaa."
+      exit 1
+    fi
+
+    # shellcheck disable=SC1091
+    source "$VENV_DIR/bin/activate"
+    log "Using cached Python dependencies (OFFLINE_MODE=true)."
+    return 0
+  fi
+
+  if [[ ! -d "$VENV_DIR" ]]; then
+    log "Creating Python virtual environment at backend/anayaa..."
+    python3 -m venv "$VENV_DIR"
   fi
   # shellcheck disable=SC1091
-  source .venv/bin/activate
+  source "$VENV_DIR/bin/activate"
   log "Installing Python dependencies..."
   pip install -r requirements.txt -q
 }
@@ -267,11 +342,12 @@ seed_milvus() {
 
 main() {
   log "Anayaa.AI backend startup"
-  ensure_venv
   load_env
+  ensure_venv
   ensure_ollama || true
   ensure_postgres
   ensure_redis
+  require_local_socket_support
   ensure_milvus
   cd "$BACKEND"
   unset MILVUS_URI

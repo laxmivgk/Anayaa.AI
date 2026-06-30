@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     milvus_collection: str = "scripture_verses"
     offline_mode: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embedding_backend: str = "onnx"
+    embedding_onnx_dir: str = "data/onnx_embeddings"
     cross_encoder_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
     cross_encoder_enabled: bool = False
     ollama_base_url: str = "http://127.0.0.1:11434"

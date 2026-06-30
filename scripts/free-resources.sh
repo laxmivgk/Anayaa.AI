@@ -25,7 +25,7 @@ Options:
   --storage    Also wipe app storage:
                Redis DB, Anayaa PostgreSQL tables, Milvus Lite DB
   --deps       Also remove dependency folders:
-               backend/.venv, legacy local venvs, frontend/node_modules
+               backend/anayaa, legacy local venvs, frontend/node_modules
   --all        Enable --services --storage --deps
   --yes        Skip confirmation prompts for --services/--storage
   --help       Show this help
@@ -84,10 +84,11 @@ pids_on_port() {
 stop_pids() {
   local label="$1"
   shift
-  local pids=("$@")
-  if [[ "${#pids[@]}" -eq 0 ]]; then
+  if [[ "$#" -eq 0 ]]; then
     return 0
   fi
+
+  local pids=("$@")
 
   log "Stopping ${label}: ${pids[*]}"
   kill "${pids[@]}" 2>/dev/null || true
@@ -114,7 +115,9 @@ stop_port() {
   while IFS= read -r pid; do
     [[ -n "$pid" ]] && pids+=("$pid")
   done < <(pids_on_port "$port")
-  stop_pids "${label} port ${port}" "${pids[@]}"
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    stop_pids "${label} port ${port}" "${pids[@]}"
+  fi
 }
 
 stop_port_if_matching() {
@@ -133,7 +136,9 @@ stop_port_if_matching() {
       warn "Skipped ${label} port ${port}; pid ${pid} does not look like an Anayaa process."
     fi
   done < <(pids_on_port "$port")
-  stop_pids "${label} port ${port}" "${pids[@]}"
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    stop_pids "${label} port ${port}" "${pids[@]}"
+  fi
 }
 
 stop_matching_processes() {
@@ -144,7 +149,9 @@ stop_matching_processes() {
   while IFS= read -r pid; do
     [[ -n "$pid" ]] && pids+=("$pid")
   done < <(pgrep -f "$pattern" 2>/dev/null | awk -v self="$$" '$1 != self' | sort -u || true)
-  stop_pids "$label" "${pids[@]}"
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    stop_pids "$label" "${pids[@]}"
+  fi
 }
 
 clean_generated() {
@@ -160,8 +167,8 @@ clean_generated() {
 
 remove_deps() {
   log "Removing dependency folders..."
-  rm -rf "$ROOT/backend/.venv"
   rm -rf "$ROOT/backend/anayaa"
+  rm -rf "$ROOT/backend/.venv"
   rm -rf "$ROOT/Anayaa"
   rm -rf "$ROOT/frontend/node_modules"
 }
@@ -261,6 +268,7 @@ stop_app_processes() {
   stop_port_if_matching "Vite frontend" "${FRONTEND_PORT:-5173}" "$ROOT/frontend|vite"
   stop_port_if_matching "alternate Vite frontend" "5174" "$ROOT/frontend|vite"
   stop_matching_processes "Anayaa MCP retrieval server" "$ROOT/backend/app/mcp/milvus_retrieval_server.py"
+  stop_matching_processes "Anayaa Milvus Lite process" "$ROOT/backend/data/milvus.db|data/milvus.db"
   stop_matching_processes "Anayaa uvicorn process" "$ROOT/backend.*uvicorn|uvicorn app.main:app"
   stop_matching_processes "Anayaa Vite process" "$ROOT/frontend.*vite|vite --host|vite$"
 }

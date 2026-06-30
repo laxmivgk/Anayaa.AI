@@ -18,8 +18,8 @@ if [[ -z "${ANAYAA_LOAD_TEST_PASSWORD:-}" ]]; then
   exit 1
 fi
 
-if [[ -x "$ROOT_DIR/backend/.venv/bin/python" ]]; then
-  PYTHON_BIN="$ROOT_DIR/backend/.venv/bin/python"
+if [[ -x "$ROOT_DIR/backend/anayaa/bin/python" ]]; then
+  PYTHON_BIN="$ROOT_DIR/backend/anayaa/bin/python"
 fi
 
 pre_synthesis_arg=()
