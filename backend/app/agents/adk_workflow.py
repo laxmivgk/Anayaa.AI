@@ -14,11 +14,6 @@ from google.adk.sessions.in_memory_session_service import InMemorySessionService
 from google.adk.workflow import node
 from google.genai import types
 
-<<<<<<< HEAD
-from app.agents.cache_policy import cache_policy_metadata
-from app.agents.pipeline_errors import PipelineError, RetrievalError, ServiceUnavailableError
-=======
->>>>>>> main
 from app.agents.cache_policy import cache_policy_metadata
 from app.agents.pipeline_errors import PipelineError, RetrievalError, ServiceUnavailableError
 from app.agents.pipeline_messages import (
@@ -27,15 +22,6 @@ from app.agents.pipeline_messages import (
     build_quality_failure_response,
     build_retrieval_unavailable_response,
     build_synthesizer_unavailable_response,
-<<<<<<< HEAD
-from app.agents.pipeline_messages import (
-    build_insufficient_context_response,
-    build_planner_unavailable_response,
-    build_quality_failure_response,
-    build_retrieval_unavailable_response,
-    build_synthesizer_unavailable_response,
-=======
->>>>>>> main
 )
 from app.agents.workflow import (
     evaluate_semantic_cache,
@@ -48,10 +34,6 @@ from app.config import get_settings
 from app.eco.tracker import EcoTracker
 from app.llm.generator import generate_moral_pathway
 from app.llm.router import select_model
-<<<<<<< HEAD
-from app.llm.router import select_model
-=======
->>>>>>> main
 from app.mcp.client import retrieve_via_mcp
 from app.memory.redis_cache import RedisCache
 from app.observability.audit_logger import persist_audit_log
@@ -59,10 +41,6 @@ from app.observability.g_eval_judge import run_g_eval_judge
 from app.observability.guidance_reasons import build_guidance_reasons
 from app.observability.latency import AgentLatencyTracker
 from app.observability.plan_trace import persist_request_plan_trace
-<<<<<<< HEAD
-
-=======
->>>>>>> main
 
 logger = logging.getLogger(__name__)
 
@@ -119,10 +97,6 @@ SCRIPTURE_BRIDGES = {
     "business": {"business", "fairness", "justice", "integrity", "wealth", "duty", "work"},
     "company": {"business", "wealth", "work", "duty", "responsibility", "hardship", "failure"},
     "dropshipping": {"business", "integrity", "honesty", "wealth", "fairness", "responsibility"},
-<<<<<<< HEAD
-  
-=======
->>>>>>> main
     "financial": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
     "financially": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
     "friend": {"friend", "goodwill", "love", "compassion", "trust"},
@@ -450,17 +424,6 @@ def _is_safe_to_cache(result: dict[str, Any]) -> bool:
         and str(audit.get("auditStatus") or "") == "ok"
         and bool(grounding_contract.get("passed"))
         and len(result.get("citations") or []) >= 2
-<<<<<<< HEAD
-    grounding_contract = audit.get("groundingContract") or {}
-    return (
-        result.get("status") == "completed"
-        and bool(audit.get("passed"))
-        and not bool(audit.get("judgeFallback", False))
-        and str(audit.get("auditStatus") or "") == "ok"
-        and bool(grounding_contract.get("passed"))
-        and len(result.get("citations") or []) >= 2
-=======
->>>>>>> main
         and result.get("moralPathway") is not None
     )
 
@@ -562,10 +525,6 @@ async def optimizer_node(ctx, node_input: Any) -> dict[str, Any]:
     }
 
 
-<<<<<<< HEAD
-async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
-=======
->>>>>>> main
 async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     settings = get_settings()
     turn = int(payload.get("reactTurn") or 0) + 1
@@ -586,28 +545,6 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     keywords = payload.get("keywords", [])
     audit = payload.get("auditScores") or {}
     context_sufficient = bool(payload.get("contextSufficient", True))
-<<<<<<< HEAD
-    settings = get_settings()
-    turn = int(payload.get("reactTurn") or 0) + 1
-    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
-    if payload.get("plannerError"):
-        _mark_agent(ctx, "ReActReasoner", category="workflow", status="skipped", metadata={"reason": "planner_unavailable"})
-        return {
-            **payload,
-            "reactTurn": turn,
-            "reactLoopLimit": settings.react_max_turns,
-            "reactReasoning": "Planner unavailable; finalize with an explicit planner-unavailable response.",
-            "reactSearchQuery": dilemma,
-            "reactLoopLog": [
-                *payload.get("reactLoopLog", []),
-                f"Turn {turn} Reason: Planner unavailable; retrieval and synthesis skipped.",
-            ],
-        }
-    keywords = payload.get("keywords", [])
-    audit = payload.get("auditScores") or {}
-    context_sufficient = bool(payload.get("contextSufficient", True))
-=======
->>>>>>> main
 
     reason = "Initial reasoning pass: retrieve scripture context and draft grounded guidance."
     if payload.get("retrievalError"):
@@ -684,33 +621,6 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
             **payload,
             "searchQuery": payload.get("dilemma") or ctx.state.get("dilemma", ""),
             "retrievalQueries": [],
-<<<<<<< HEAD
-            "multiQueryUsed": False,
-            "hybridSource": None,
-            "candidatesCount": 0,
-            "rerankedCitations": [],
-            "citations": [],
-            "retrievalViaMcp": False,
-            "contextSufficient": False,
-            "topRetrievalScore": 0,
-            "retrievalThreshold": settings.retrieval_confidence_threshold,
-        }
-    if payload.get("skipRetryRetrieval"):
-        _mark_agent(ctx, "McpRetriever", category="tool", status="skipped", metadata={"reason": "retry_planner_finalized"})
-        return payload
-    dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
-    search_query = payload.get("reactSearchQuery") or dilemma
-    keywords = payload.get("keywords", [])
-    if not _is_moral_guidance_query(dilemma):
-        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
-        if eco:
-            eco.track_stage("Retriever", confidence=0)
-        return {
-            **payload,
-            "searchQuery": dilemma,
-            "retrievalQueries": [dilemma],
-=======
->>>>>>> main
             "multiQueryUsed": False,
             "hybridSource": None,
             "candidatesCount": 0,
@@ -895,11 +805,6 @@ async def react_observe_node(ctx, node_input: dict[str, Any]) -> Event:
     audit = payload.get("auditScores") or {}
     context_sufficient = bool(payload.get("contextSufficient", True))
     audit_passed = bool(audit.get("passed", False))
-<<<<<<< HEAD
-    planner_error = payload.get("plannerError")
-    synthesizer_error = payload.get("synthesizerError")
-=======
->>>>>>> main
     planner_error = payload.get("plannerError")
     synthesizer_error = payload.get("synthesizerError")
     retrieval_error = payload.get("retrievalError")
@@ -918,25 +823,6 @@ async def react_observe_node(ctx, node_input: dict[str, Any]) -> Event:
         else:
             observation = "Observation: retry planner chose to finalize without another retrieval attempt."
     elif retrieval_error:
-<<<<<<< HEAD
-    retrieval_error = payload.get("retrievalError")
-    retrieval_blocked = payload.get("retrievalBlocked")
-    retry_planner_stopped = bool(payload.get("skipRetryRetrieval"))
-
-    route = "finalize"
-    observation = "Observation: quality threshold passed; finalize response."
-    if planner_error:
-        observation = "Observation: strategic planner failed; finalize with a planner-unavailable message."
-    elif synthesizer_error:
-        observation = "Observation: guidance synthesizer failed; finalize with a synthesizer-unavailable message."
-    elif retry_planner_stopped:
-        if payload.get("reactRetryPlanError"):
-            observation = "Observation: retry planner failed; finalize without deterministic retry fallback."
-        else:
-            observation = "Observation: retry planner chose to finalize without another retrieval attempt."
-    elif retrieval_error:
-=======
->>>>>>> main
         observation = "Observation: retrieval service failed; finalize with a graceful retrieval message."
     elif retrieval_blocked:
         observation = f"Observation: retrieval blocked because {retrieval_blocked}; finalize without synthesis."
@@ -1081,11 +967,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["loopDetails"] = _react_loop_details(payload)
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
-<<<<<<< HEAD
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
-=======
->>>>>>> main
 
     if payload.get("preSynthesisApprovalRequired"):
         candidate_items = payload.get("rerankedCitations") or payload.get("candidates") or []
@@ -1144,11 +1025,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         }
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
-<<<<<<< HEAD
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
-=======
->>>>>>> main
 
     audit = payload.get("auditScores") or {}
     if not audit.get("passed", False):
@@ -1171,11 +1047,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         result["loopDetails"] = _react_loop_details(payload)
         _attach_cache_policy(result, payload.get("cacheKey"))
         return await _finalize_with_trace(ctx, result)
-<<<<<<< HEAD
-        _attach_cache_policy(result, payload.get("cacheKey"))
-        return await _finalize_with_trace(ctx, result)
-=======
->>>>>>> main
 
     hitl_enabled = bool(ctx.state.get("hitl_enabled", settings.hitl_enabled))
     reranked = payload.get("rerankedCitations") or []
@@ -1205,10 +1076,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "multiQueryUsed": payload.get("multiQueryUsed", False),
         "moralPathway": payload.get("moralPathway"),
         "guidanceReasons": build_guidance_reasons(dilemma, citations, payload.get("moralPathway"), audit),
-<<<<<<< HEAD
-        "guidanceReasons": build_guidance_reasons(dilemma, citations, payload.get("moralPathway"), audit),
-=======
->>>>>>> main
         "quantizedMetrics": payload.get("quantizedMetrics"),
         "synthesisEngine": payload.get("synthesisEngine"),
         "confidence": payload.get("confidence", 0),
@@ -1236,14 +1103,6 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         await store_semantic_cache(redis, cache_key, result)
 
     return await _finalize_with_trace(ctx, result)
-<<<<<<< HEAD
-    _attach_cache_policy(result, cache_key)
-    if redis and cache_key and _is_safe_to_cache(result):
-        await store_semantic_cache(redis, cache_key, result)
-
-    return await _finalize_with_trace(ctx, result)
-=======
->>>>>>> main
 
 
 def _build_workflow() -> Workflow:
@@ -1312,11 +1171,6 @@ async def run_adk_pipeline(
             code="adk_disabled",
         )
 
-<<<<<<< HEAD
-    request_id = str(eco.request_id)
-    latency = AgentLatencyTracker(request_id=request_id)
-=======
->>>>>>> main
     request_id = str(eco.request_id)
     latency = AgentLatencyTracker(request_id=request_id)
     eco.track_stage("SanitizeGate")
@@ -1338,26 +1192,6 @@ async def run_adk_pipeline(
         eco.track_stage("CacheReturn", cache_hit=True, confidence=95)
         power = eco.audit_power_footprint(True, 95)
         cached_result = {
-<<<<<<< HEAD
-    eco.track_stage("SanitizeGate")
-    with latency.track("QueryRewriter", category="deterministic"):
-        rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
-    rewritten_dilemma = rewrite["rewrittenQuery"]
-    with latency.track("QueryOptimizer", category="deterministic", metadata={"phase": "pre_adk_preview"}):
-        optimizer_preview = {
-            **optimize_query(rewritten_dilemma, []),
-            **rewrite,
-        }
-    eco.track_stage("QueryOptimizer")
-
-    with latency.track("SemanticCache", category="cache", metadata={"enabled": not hitl_enabled}):
-        cached = None if hitl_enabled else await evaluate_semantic_cache(redis, optimizer_preview["cacheKey"])
-    if cached and _is_safe_to_cache(cached):
-        eco.track_stage("CacheReturn", cache_hit=True, confidence=95)
-        power = eco.audit_power_footprint(True, 95)
-        cached_result = {
-=======
->>>>>>> main
             **cached,
             "cacheHit": True,
             "orchestrator": "google-adk",
@@ -1370,10 +1204,6 @@ async def run_adk_pipeline(
             "powerMetrics": power,
             "ecoBreakdown": eco.totals()["ecoBreakdown"],
             "requestId": eco.request_id,
-<<<<<<< HEAD
-            "agentLatencyMetrics": latency.snapshot(),
-=======
->>>>>>> main
             "agentLatencyMetrics": latency.snapshot(),
         }
         cached_result["cachePolicy"] = {
@@ -1386,20 +1216,6 @@ async def run_adk_pipeline(
 
     _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco, "latency": latency}
     session_id: str | None = None
-<<<<<<< HEAD
-        }
-        cached_result["cachePolicy"] = {
-            **cached_result.get("cachePolicy", {}),
-            "cacheable": True,
-            "reason": "cache_hit",
-        }
-        await persist_request_plan_trace(pg, request_id, cached_result)
-        return cached_result
-
-    _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco, "latency": latency}
-    session_id: str | None = None
-=======
->>>>>>> main
     try:
         runner = _get_runner()
         session = await _session_service.create_session(
@@ -1420,10 +1236,6 @@ async def run_adk_pipeline(
             },
         )
         session_id = session.id
-<<<<<<< HEAD
-        session_id = session.id
-=======
->>>>>>> main
 
         final_payload: dict[str, Any] | None = None
         async for event in runner.run_async(
@@ -1436,10 +1248,6 @@ async def run_adk_pipeline(
                     final_payload = event.output
     finally:
         await _delete_adk_session(user_email, session_id)
-<<<<<<< HEAD
-        await _delete_adk_session(user_email, session_id)
-=======
->>>>>>> main
         _runtime_contexts.pop(request_id, None)
 
     if not final_payload:
