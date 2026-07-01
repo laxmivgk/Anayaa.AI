@@ -1,0 +1,425 @@
+#!/usr/bin/env bash
+# Product-style local entrypoint for Anayaa.AI.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+BACKEND="$ROOT/backend"
+FRONTEND="$ROOT/frontend"
+VENV_PY="$BACKEND/anayaa/bin/python"
+
+log() { echo "[anayaa] $*"; }
+ok() { echo "[anayaa] OK: $*"; }
+warn() { echo "[anayaa] WARNING: $*" >&2; }
+fail() { echo "[anayaa] MISSING: $*" >&2; DOCTOR_FAILED=true; }
+
+usage() {
+  cat <<'EOF'
+Usage: ./scripts/anayaa <command> [options]
+
+Commands:
+  setup             One-time online setup: local services, deps, models, embeddings, retrieval seed, frontend build
+  serve             Start local Anayaa at http://127.0.0.1:8000
+  doctor            Check local runtime prerequisites and cached assets
+  stop              Stop Anayaa app processes without deleting local assets
+  clean             Run the existing cleanup script; pass through cleanup options
+  help              Show this help
+
+Serve options:
+  --offline         Force OFFLINE_MODE=true for cached local runtime
+  --online          Force OFFLINE_MODE=false; may install/pull if assets are missing
+  --reload          Start FastAPI with reload for development
+
+Examples:
+  ./scripts/anayaa setup
+  ./scripts/anayaa serve
+  ./scripts/anayaa serve --online
+  ./scripts/anayaa doctor
+  ./scripts/anayaa stop
+  ./scripts/anayaa clean --all --yes
+EOF
+}
+
+load_env_if_present() {
+  if [[ -f "$BACKEND/.env" ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source "$BACKEND/.env"
+    set +a
+  fi
+  unset MILVUS_URI
+}
+
+frontend_build_ready() {
+  [[ -f "$FRONTEND/dist/index.html" ]]
+}
+
+build_frontend_if_possible() {
+  if frontend_build_ready; then
+    return 0
+  fi
+
+  if [[ "${OFFLINE_MODE:-true}" == "false" ]]; then
+    log "Frontend build is missing; installing/building because OFFLINE_MODE=false."
+    cd "$FRONTEND"
+    npm install
+    npm run build
+    return 0
+  fi
+
+  if [[ -d "$FRONTEND/node_modules" ]]; then
+    log "Frontend build is missing; rebuilding from cached node_modules."
+    cd "$FRONTEND"
+    npm run build
+    return 0
+  fi
+
+  echo "[anayaa] ERROR: frontend/dist is missing." >&2
+  echo "[anayaa] Run online setup once:" >&2
+  echo "[anayaa]   ./scripts/anayaa setup" >&2
+  echo "[anayaa] Then start local Anayaa:" >&2
+  echo "[anayaa]   ./scripts/anayaa serve" >&2
+  exit 1
+}
+
+postgres_reachable() {
+  local host="${POSTGRES_HOST:-127.0.0.1}"
+  local port="${POSTGRES_PORT:-5432}"
+  command -v pg_isready >/dev/null 2>&1 && pg_isready -h "$host" -p "$port" >/dev/null 2>&1
+}
+
+redis_reachable() {
+  local url="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+  if command -v redis-cli >/dev/null 2>&1; then
+    redis-cli -u "$url" ping >/dev/null 2>&1
+    return $?
+  fi
+
+  [[ -x "$VENV_PY" ]] && "$VENV_PY" - "$url" <<'PY'
+import sys
+from urllib.parse import urlparse
+import redis
+
+parsed = urlparse(sys.argv[1])
+try:
+    client = redis.Redis(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 6379,
+        db=int((parsed.path or "/0").lstrip("/") or 0),
+    )
+    client.ping()
+except Exception:
+    sys.exit(1)
+PY
+}
+
+wait_for_postgres() {
+  for _ in $(seq 1 12); do
+    postgres_reachable && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_redis() {
+  for _ in $(seq 1 12); do
+    redis_reachable && return 0
+    sleep 1
+  done
+  return 1
+}
+
+start_homebrew_service() {
+  local service="$1"
+  command -v brew >/dev/null 2>&1 || return 1
+  brew list --versions "$service" >/dev/null 2>&1 || return 1
+  log "Starting local service with Homebrew: ${service}"
+  brew services start "$service" >/dev/null 2>&1
+}
+
+ensure_local_postgres_service() {
+  if postgres_reachable; then
+    ok "PostgreSQL already running at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}"
+    return 0
+  fi
+
+  local services=(postgresql@16 postgresql@15 postgresql@14 postgresql)
+  local service
+  for service in "${services[@]}"; do
+    if start_homebrew_service "$service" && wait_for_postgres; then
+      ok "PostgreSQL started at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}"
+      return 0
+    fi
+  done
+
+  echo "[anayaa] ERROR: PostgreSQL is not running at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}." >&2
+  echo "[anayaa] Start it once, for example:" >&2
+  echo "[anayaa]   brew services start postgresql@16" >&2
+  exit 1
+}
+
+ensure_local_redis_service() {
+  if redis_reachable; then
+    ok "Redis already running at ${REDIS_URL:-redis://127.0.0.1:6379/0}"
+    return 0
+  fi
+
+  if start_homebrew_service "redis" && wait_for_redis; then
+    ok "Redis started at ${REDIS_URL:-redis://127.0.0.1:6379/0}"
+    return 0
+  fi
+
+  if command -v redis-server >/dev/null 2>&1; then
+    log "Starting local Redis with redis-server."
+    redis-server --daemonize yes >/dev/null 2>&1 || true
+    if wait_for_redis; then
+      ok "Redis started at ${REDIS_URL:-redis://127.0.0.1:6379/0}"
+      return 0
+    fi
+  fi
+
+  echo "[anayaa] ERROR: Redis is not running at ${REDIS_URL:-redis://127.0.0.1:6379/0}." >&2
+  echo "[anayaa] Start it once, for example:" >&2
+  echo "[anayaa]   brew services start redis" >&2
+  exit 1
+}
+
+cmd_setup() {
+  log "Running one-time local product setup."
+  load_env_if_present
+  ensure_local_postgres_service
+  ensure_local_redis_service
+  "$ROOT/scripts/setup_postgres.sh"
+  "$ROOT/scripts/setup-online.sh"
+  log "Setup complete. Start Anayaa with:"
+  log "  ./scripts/anayaa serve"
+}
+
+cmd_serve() {
+  local reload=false
+  load_env_if_present
+
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --offline) export OFFLINE_MODE=true ;;
+      --online) export OFFLINE_MODE=false ;;
+      --reload) reload=true ;;
+      --help) usage; exit 0 ;;
+      *) echo "[anayaa] Unknown serve option: $1" >&2; usage; exit 1 ;;
+    esac
+    shift
+  done
+
+  export ANAYAA_HOST="${ANAYAA_HOST:-127.0.0.1}"
+  export ANAYAA_PORT="${ANAYAA_PORT:-8000}"
+  if [[ "$reload" == true ]]; then
+    export ANAYAA_RELOAD=true
+  fi
+
+  ensure_local_postgres_service
+  ensure_local_redis_service
+  build_frontend_if_possible
+  log "Serving Anayaa locally. Open http://${ANAYAA_HOST}:${ANAYAA_PORT}"
+  exec "$ROOT/scripts/start-backend.sh"
+}
+
+check_command() {
+  local label="$1"
+  local command_name="$2"
+  if command -v "$command_name" >/dev/null 2>&1; then
+    ok "$label found ($(command -v "$command_name"))"
+  else
+    fail "$label not found"
+  fi
+}
+
+check_python_deps() {
+  if [[ ! -x "$VENV_PY" ]]; then
+    fail "backend/anayaa Python environment missing; run ./scripts/anayaa setup"
+    return 0
+  fi
+
+  if "$VENV_PY" - <<'PY'
+import importlib.util
+import sys
+
+required = [
+    "fastapi",
+    "uvicorn",
+    "redis",
+    "mcp",
+    "pymilvus",
+    "sentence_transformers",
+    "onnxruntime",
+]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+if missing:
+    print(", ".join(missing), file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    ok "backend Python dependencies installed"
+  else
+    fail "backend Python dependencies incomplete; run ./scripts/anayaa setup"
+  fi
+}
+
+check_postgres() {
+  local host="${POSTGRES_HOST:-127.0.0.1}"
+  local port="${POSTGRES_PORT:-5432}"
+  if command -v pg_isready >/dev/null 2>&1 && pg_isready -h "$host" -p "$port" >/dev/null 2>&1; then
+    ok "PostgreSQL reachable at ${host}:${port}"
+  else
+    fail "PostgreSQL not reachable at ${host}:${port}"
+  fi
+}
+
+check_redis() {
+  local url="${REDIS_URL:-redis://127.0.0.1:6379/0}"
+  if [[ -x "$VENV_PY" ]] && "$VENV_PY" - "$url" <<'PY'
+import sys
+from urllib.parse import urlparse
+import redis
+
+parsed = urlparse(sys.argv[1])
+try:
+    client = redis.Redis(
+        host=parsed.hostname or "127.0.0.1",
+        port=parsed.port or 6379,
+        db=int((parsed.path or "/0").lstrip("/") or 0),
+    )
+    client.ping()
+except Exception:
+    sys.exit(1)
+PY
+  then
+    ok "Redis reachable at ${url}"
+  else
+    fail "Redis not reachable at ${url}"
+  fi
+}
+
+check_ollama() {
+  local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+  local models=(gemma2:2b qwen3:4b llama3.2:3b)
+  check_command "Ollama CLI" "ollama"
+
+  if command -v curl >/dev/null 2>&1 && curl -sf "${base_url}/api/tags" >/dev/null 2>&1; then
+    ok "Ollama API reachable at ${base_url}"
+  else
+    fail "Ollama API not reachable at ${base_url}"
+    return 0
+  fi
+
+  local model
+  for model in "${models[@]}"; do
+    if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$model"; then
+      ok "Ollama model cached: ${model}"
+    else
+      fail "Ollama model missing: ${model}"
+    fi
+  done
+}
+
+check_assets() {
+  if frontend_build_ready; then
+    ok "frontend build present at frontend/dist"
+  else
+    fail "frontend build missing; run ./scripts/anayaa setup"
+  fi
+
+  if [[ -d "$BACKEND/data/onnx_embeddings" ]]; then
+    ok "ONNX embedding assets present"
+  else
+    fail "ONNX embedding assets missing; run ./scripts/anayaa setup"
+  fi
+
+  if [[ -f "$BACKEND/data/milvus.db" ]]; then
+    ok "Milvus Lite data present"
+  else
+    fail "Milvus Lite data missing; run ./scripts/anayaa setup"
+  fi
+}
+
+cmd_doctor() {
+  DOCTOR_FAILED=false
+  load_env_if_present
+  log "Checking Anayaa local runtime..."
+  check_command "Python 3" "python3"
+  check_command "Node.js" "node"
+  check_command "npm" "npm"
+  check_command "curl" "curl"
+  check_python_deps
+  check_postgres
+  check_redis
+  check_ollama
+  check_assets
+
+  if [[ "$DOCTOR_FAILED" == true ]]; then
+    echo "[anayaa] Doctor found missing requirements. For first-time or repaired setup run:" >&2
+    echo "[anayaa]   ./scripts/anayaa setup" >&2
+    exit 1
+  fi
+  log "Doctor passed. Start Anayaa with: ./scripts/anayaa serve"
+}
+
+pids_on_port() {
+  local port="$1"
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | sort -u || true
+}
+
+stop_pids() {
+  local label="$1"
+  shift
+  if [[ "$#" -eq 0 ]]; then
+    return 0
+  fi
+  log "Stopping ${label}: $*"
+  kill "$@" 2>/dev/null || true
+  sleep 1
+  kill -9 "$@" 2>/dev/null || true
+}
+
+stop_port_if_anayaa() {
+  local port="$1"
+  local pids=()
+  local pid
+  local command
+  while IFS= read -r pid; do
+    [[ -z "$pid" ]] && continue
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$command" == *"$ROOT"* || "$command" == *"app.main:app"* || "$command" == *"vite"* ]]; then
+      pids+=("$pid")
+    else
+      warn "Skipped port ${port}; pid ${pid} does not look like an Anayaa process."
+    fi
+  done < <(pids_on_port "$port")
+  if [[ "${#pids[@]}" -gt 0 ]]; then
+    stop_pids "Anayaa process on port ${port}" "${pids[@]}"
+  fi
+}
+
+cmd_stop() {
+  local port="${ANAYAA_PORT:-8000}"
+  stop_port_if_anayaa "$port"
+  stop_port_if_anayaa 5173
+  log "Stopped Anayaa app processes. Local models, data, and built frontend were kept."
+}
+
+cmd_clean() {
+  exec "$ROOT/scripts/free-resources.sh" "$@"
+}
+
+command="${1:-help}"
+if [[ "$#" -gt 0 ]]; then
+  shift
+fi
+
+case "$command" in
+  setup) cmd_setup "$@" ;;
+  serve) cmd_serve "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  stop) cmd_stop "$@" ;;
+  clean) cmd_clean "$@" ;;
+  help|--help|-h) usage ;;
+  *) echo "[anayaa] Unknown command: $command" >&2; usage; exit 1 ;;
+esac
