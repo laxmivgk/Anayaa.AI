@@ -181,6 +181,7 @@ PY
 
 load_env() {
   cd "$BACKEND"
+  local requested_offline_mode="${OFFLINE_MODE:-}"
   if [[ ! -f .env ]]; then
     cp .env.example .env
     log "Created backend/.env from .env.example"
@@ -191,6 +192,9 @@ load_env() {
   # shellcheck disable=SC1091
   source .env
   set +a
+  if [[ -n "$requested_offline_mode" ]]; then
+    export OFFLINE_MODE="$requested_offline_mode"
+  fi
   unset MILVUS_URI
 }
 
@@ -351,8 +355,17 @@ main() {
   ensure_milvus
   cd "$BACKEND"
   unset MILVUS_URI
-  log "Starting FastAPI at http://localhost:8000"
-  exec uvicorn app.main:app --reload --port 8000
+  local port="${ANAYAA_PORT:-8000}"
+  local host="${ANAYAA_HOST:-127.0.0.1}"
+  local reload_args=()
+  if [[ "${ANAYAA_RELOAD:-false}" == "true" ]]; then
+    reload_args=(--reload)
+  fi
+  log "Starting Anayaa at http://${host}:${port}"
+  if [[ "${#reload_args[@]}" -gt 0 ]]; then
+    exec uvicorn app.main:app --host "$host" --port "$port" "${reload_args[@]}"
+  fi
+  exec uvicorn app.main:app --host "$host" --port "$port"
 }
 
 main "$@"
