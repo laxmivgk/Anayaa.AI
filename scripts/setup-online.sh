@@ -145,6 +145,12 @@ ensure_frontend_deps() {
   npm install
 }
 
+build_frontend() {
+  cd "$FRONTEND"
+  log "Building frontend for local Anayaa serve..."
+  npm run build
+}
+
 ensure_ollama_models() {
   local models=(gemma2:2b qwen3:4b llama3.2:3b)
 
@@ -202,12 +208,12 @@ main() {
   ensure_jwt_secret
   ensure_backend_deps
   ensure_frontend_deps
+  build_frontend
   ensure_ollama_models
   cache_embedding_model
   seed_retrieval
   log "Online setup complete. You can now run Anayaa with OFFLINE_MODE=true:"
-  log "  ./scripts/start-backend.sh"
-  log "  ./scripts/start-frontend.sh"
+  log "  ./scripts/anayaa serve"
 }
 
 main "$@"

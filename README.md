@@ -212,6 +212,7 @@ The UI keeps this user-facing:
 |-- infra/
 |   `-- init.sql
 |-- scripts/
+|   |-- anayaa          # product-style local CLI: setup, serve, doctor, stop, clean
 |   |-- setup-online.sh
 |   |-- setup_postgres.sh
 |   |-- start-backend.sh
@@ -242,28 +243,38 @@ The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127
 
 ## Local Setup
 
-Run the one-time online setup first. Keep internet access on for this step because it installs Python/npm dependencies, pulls local models, caches and exports ONNX embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/free-resources.sh --storage` or `./scripts/free-resources.sh --all --yes`, because those options remove local retrieval storage and `--all` also removes dependency folders.
+Anayaa is local-first. The normal product-style path is one setup command, then one serve command.
 
 ```bash
-./scripts/setup_postgres.sh
-./scripts/setup-online.sh
-```
-
-Then start the app:
-
-```bash
-./scripts/start-backend.sh
-./scripts/start-frontend.sh
+./scripts/anayaa setup
+./scripts/anayaa serve
 ```
 
 Open:
 
-- Frontend: `http://127.0.0.1:5173`
-- Backend docs: `http://localhost:8000/docs`
-- Health: `http://localhost:8000/api/health`
-- Deep health: `http://localhost:8000/api/health/deep`
+- App: `http://127.0.0.1:8000`
+- Health: `http://127.0.0.1:8000/api/health`
+- Deep health: `http://127.0.0.1:8000/api/health/deep`
 
-`scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000.
+`./scripts/anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/anayaa clean --all --yes`, because `--all` removes storage and dependency folders.
+
+`./scripts/anayaa serve` starts the local runtime. It works for normal offline/local use after setup because `OFFLINE_MODE=true` uses cached dependencies, built frontend assets, local Ollama models, ONNX embeddings, and local Milvus Lite data. If you intentionally want serve to repair missing online assets, run:
+
+```bash
+./scripts/anayaa serve --online
+```
+
+Useful product-style commands:
+
+```bash
+./scripts/anayaa doctor
+./scripts/anayaa stop
+./scripts/anayaa clean
+```
+
+`./scripts/anayaa doctor` checks the local runtime and reports exactly what is missing. `./scripts/anayaa stop` stops Anayaa app processes without deleting cached models, local data, or the built frontend. `./scripts/anayaa clean` delegates to the cleanup script for generated files and optional storage/dependency cleanup.
+
+`scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000. The built frontend is served by FastAPI from `frontend/dist`.
 
 With `OFFLINE_MODE=true`, backend startup does not install missing Python packages from the internet. It uses the existing `backend/anayaa` virtual environment created by `./scripts/setup-online.sh`. If you ran `./scripts/free-resources.sh --all --yes`, reconnect to Wi-Fi and run `./scripts/setup-online.sh` before starting the backend again.
 
@@ -290,6 +301,15 @@ Current local model routing:
 | G-Eval judge | `qwen3:4b` |
 
 When `GEMINI_API_KEY` is configured, planner and synthesizer routing can use the optional cloud path. Local-first development assumes the Ollama models above.
+
+For frontend/backend development, you can still run the old two-process Vite flow:
+
+```bash
+./scripts/start-backend.sh
+./scripts/start-frontend.sh
+```
+
+The development frontend runs at `http://127.0.0.1:5173` and proxies API calls to the backend at `http://127.0.0.1:8000`.
 
 ## Environment
 
@@ -469,9 +489,8 @@ Use stronger cleanup only when you really want to reclaim more local resources:
 `--all` enables `--services`, `--storage`, and `--deps`. That can stop shared local PostgreSQL, Redis, Ollama, and Milvus ports; wipe Anayaa Redis/PostgreSQL app data; remove the local Milvus Lite DB; and delete dependency folders such as `backend/anayaa`, legacy local virtualenv folders, and `frontend/node_modules`. After `--storage` or `--all`, reconnect to Wi-Fi and run setup/startup again so dependencies, cached assets, and retrieval data are restored:
 
 ```bash
-./scripts/setup-online.sh
-./scripts/start-backend.sh
-./scripts/start-frontend.sh
+./scripts/anayaa setup
+./scripts/anayaa serve
 ```
 
 Run load tests:

@@ -1,8 +1,11 @@
 import asyncio
 from contextlib import asynccontextmanager, suppress
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routes import auth, query, system
 from app.auth.session import SessionManager
@@ -15,6 +18,9 @@ from app.privacy.retention import retention_loop
 from app.retrieval.corpus import load_scriptures_json
 from app.retrieval.embeddings import get_embedder
 from app.llm.generator import prewarm_ollama_models
+
+ROOT_DIR = Path(__file__).resolve().parents[2]
+FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 
 
 @asynccontextmanager
@@ -89,6 +95,19 @@ def create_app() -> FastAPI:
     app.include_router(auth.router)
     app.include_router(query.router)
     app.include_router(system.router)
+
+    if FRONTEND_DIST.exists():
+        assets_dir = FRONTEND_DIST / "assets"
+        if assets_dir.exists():
+            app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_frontend(full_path: str):
+            requested = FRONTEND_DIST / full_path
+            if full_path and requested.is_file():
+                return FileResponse(requested)
+            return FileResponse(FRONTEND_DIST / "index.html")
+
     return app
 
 
