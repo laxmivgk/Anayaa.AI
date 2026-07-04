@@ -861,7 +861,7 @@ export default function App() {
         {/* Login copy stays product-focused while internal agent/debug details remain hidden. */}
         <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
           <h1 className="text-4xl italic mb-3">Anayaa.AI</h1>
-          <p className="mb-6 text-sm text-stone-500">Dharma-driven, eco-conscious edge guidance</p>
+          <p className="mb-6 text-sm text-stone-500">Dharma-driven, resource-aware edge guidance</p>
           <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
             Email
           </label>
@@ -1079,7 +1079,7 @@ export default function App() {
                     className="text-sm font-bold text-[#5A5A40] underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline"
                     aria-label="Start next dilemma"
                   >
-                    Next dilemna
+                    Next dilemma
                   </button>
                   <button
                     onClick={() => handleQuery(true)}

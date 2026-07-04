@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from app.api.deps import require_auth
 from app.agents.pipeline_errors import PipelineError
-from app.agents.pipeline_messages import build_quality_failure_user_message
+from app.agents.pipeline_messages import build_hitl_compile_failure_user_message
 from app.eco.aggregator import get_daily_rollup
 from app.hitl.checkpoints import resume_checkpoint
 from app.llm.generator import generate_moral_pathway
@@ -145,6 +145,37 @@ def _hitl_compile_audit_query(dilemma: str, concepts: list[str]) -> str:
     return f"{safe_dilemma} Selected concepts: {', '.join(focus_terms)}"
 
 
+def _hitl_compile_synthesis_tone(base_tone: str, concepts: list[str], *, retry: bool = False) -> str:
+    focus_terms = [str(concept).strip().lower() for concept in concepts if str(concept).strip()][:8]
+    parts = [str(base_tone or "Balanced guidance mode").strip()]
+    if focus_terms:
+        parts.append(f"Interactive compile selected concepts: {', '.join(focus_terms)}.")
+    parts.append(
+        "Interactive compile mode: use the selected scriptures as the grounding source. "
+        "In Scripture grounding, name at least two selected scripture sources exactly and reuse one anchor "
+        "keyword from each."
+    )
+    if retry:
+        parts.append(
+            "Regenerate because the previous draft did not prove enough support from the selected scripture passages. "
+            "Make the Scripture grounding section explicit, concrete, and tied to two selected citations."
+        )
+    return " ".join(part for part in parts if part)
+
+
+def _should_retry_hitl_compile(audit: dict, citations: list[dict]) -> bool:
+    if audit.get("passed") or len(citations) < 2:
+        return False
+    failed = set(audit.get("failedDimensions") or [])
+    grounding_failed = bool(failed & {"citation_grounding", "context_grounding", "grounding_contract"})
+    contract = audit.get("groundingContract") or {}
+    contract_failed = bool(
+        set(contract.get("failedChecks") or [])
+        & {"scriptureGroundingSectionPresent", "citationTermsInScriptureGrounding"}
+    )
+    return grounding_failed or contract_failed
+
+
 @router.post("/hitl/resume")
 async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_auth)):
     pg: PostgresPool = request.app.state.pg
@@ -171,7 +202,8 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         concepts = normalize_harmful_concepts(concepts)
         dilemma = payload.get("rewrittenQuery") or payload.get("originalQuery") or ""
         try:
-            pathway, metrics = await generate_moral_pathway(dilemma, citations, payload.get("toneMsg") or "")
+            synthesis_tone = _hitl_compile_synthesis_tone(payload.get("toneMsg") or "", concepts)
+            pathway, metrics = await generate_moral_pathway(dilemma, citations, synthesis_tone)
         except PipelineError as exc:
             return {
                 "success": True,
@@ -202,12 +234,35 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
         # Judge compiled HITL guidance against the user's dilemma, with selected concepts as extra focus.
         audit_query = _hitl_compile_audit_query(dilemma, concepts)
         audit = await run_g_eval_judge(audit_query, citations, pathway)
+        if _should_retry_hitl_compile(audit, citations):
+            try:
+                retry_tone = _hitl_compile_synthesis_tone(payload.get("toneMsg") or "", concepts, retry=True)
+                retry_pathway, retry_metrics = await generate_moral_pathway(dilemma, citations, retry_tone)
+                retry_audit = await run_g_eval_judge(audit_query, citations, retry_pathway)
+                if retry_audit.get("passed"):
+                    pathway = retry_pathway
+                    metrics = {**retry_metrics, "hitlGroundingRetry": True}
+                    audit = retry_audit
+                else:
+                    audit["hitlGroundingRetry"] = {
+                        "attempted": True,
+                        "passed": False,
+                        "failedDimensions": retry_audit.get("failedDimensions", []),
+                    }
+            except PipelineError as exc:
+                audit["hitlGroundingRetry"] = {
+                    "attempted": True,
+                    "passed": False,
+                    "error": str(exc),
+                }
         await persist_audit_log(pg, payload.get("requestId") or body.workflowRunId, audit)
 
         result = {
             **payload,
             "status": "completed" if audit.get("passed") else "quality_threshold_not_met",
-            "userMessage": None if audit.get("passed") else build_quality_failure_user_message(audit, audit.get("minScore", 3)),
+            "userMessage": None
+            if audit.get("passed")
+            else build_hitl_compile_failure_user_message(audit, audit.get("minScore", 3)),
             "hitlDecision": body.decision,
             "humanApprovedConcepts": concepts,
             "keywords": concepts or payload.get("keywords", []),

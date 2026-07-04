@@ -128,12 +128,46 @@ wait_for_redis() {
   return 1
 }
 
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return $?
+  fi
+
+  "$@"
+}
+
 start_homebrew_service() {
   local service="$1"
   command -v brew >/dev/null 2>&1 || return 1
   brew list --versions "$service" >/dev/null 2>&1 || return 1
   log "Starting local service with Homebrew: ${service}"
   brew services start "$service" >/dev/null 2>&1
+}
+
+start_system_service() {
+  local service="$1"
+
+  if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files "${service}.service" >/dev/null 2>&1; then
+    log "Starting local service with systemctl: ${service}"
+    run_privileged systemctl start "$service" >/dev/null
+    return $?
+  fi
+
+  if command -v service >/dev/null 2>&1; then
+    if service "$service" status >/dev/null 2>&1 || [[ -x "/etc/init.d/$service" ]]; then
+      log "Starting local service with service: ${service}"
+      run_privileged service "$service" start >/dev/null
+      return $?
+    fi
+  fi
+
+  return 1
 }
 
 ensure_local_postgres_service() {
@@ -151,9 +185,18 @@ ensure_local_postgres_service() {
     fi
   done
 
+  local linux_services=(postgresql)
+  for service in "${linux_services[@]}"; do
+    if start_system_service "$service" && wait_for_postgres; then
+      ok "PostgreSQL started at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}"
+      return 0
+    fi
+  done
+
   echo "[anayaa] ERROR: PostgreSQL is not running at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}." >&2
-  echo "[anayaa] Start it once, for example:" >&2
-  echo "[anayaa]   brew services start postgresql@16" >&2
+  echo "[anayaa] Start it once, then re-run ./scripts/anayaa setup:" >&2
+  echo "[anayaa]   macOS: brew services start postgresql@16" >&2
+  echo "[anayaa]   WSL/Linux: sudo service postgresql start" >&2
   exit 1
 }
 
@@ -168,6 +211,14 @@ ensure_local_redis_service() {
     return 0
   fi
 
+  local linux_services=(redis-server redis)
+  for service in "${linux_services[@]}"; do
+    if start_system_service "$service" && wait_for_redis; then
+      ok "Redis started at ${REDIS_URL:-redis://127.0.0.1:6379/0}"
+      return 0
+    fi
+  done
+
   if command -v redis-server >/dev/null 2>&1; then
     log "Starting local Redis with redis-server."
     redis-server --daemonize yes >/dev/null 2>&1 || true
@@ -178,8 +229,9 @@ ensure_local_redis_service() {
   fi
 
   echo "[anayaa] ERROR: Redis is not running at ${REDIS_URL:-redis://127.0.0.1:6379/0}." >&2
-  echo "[anayaa] Start it once, for example:" >&2
-  echo "[anayaa]   brew services start redis" >&2
+  echo "[anayaa] Start it once, then re-run ./scripts/anayaa setup:" >&2
+  echo "[anayaa]   macOS: brew services start redis" >&2
+  echo "[anayaa]   WSL/Linux: sudo service redis-server start" >&2
   exit 1
 }
 
