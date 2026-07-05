@@ -14,9 +14,9 @@ online_setup_required() {
   echo "[anayaa] ERROR: ${reason}" >&2
   echo "[anayaa] OFFLINE_MODE=true uses only cached local dependencies and model assets." >&2
   echo "[anayaa] Connect to Wi-Fi and run the one-time setup:" >&2
-  echo "[anayaa]   ./scripts/setup-online.sh" >&2
-  echo "[anayaa] Then start the backend again:" >&2
-  echo "[anayaa]   ./scripts/start-backend.sh" >&2
+  echo "[anayaa]   ./scripts/anayaa setup" >&2
+  echo "[anayaa] Then start Anayaa again:" >&2
+  echo "[anayaa]   ./scripts/anayaa serve" >&2
 }
 
 require_local_socket_support() {
@@ -43,8 +43,8 @@ PY
   fi
 
   echo "[anayaa] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
-  echo "[anayaa] Run backend startup from a normal macOS Terminal window, not a restricted/sandboxed shell:" >&2
-  echo "[anayaa]   cd \"$ROOT\" && ./scripts/start-backend.sh" >&2
+  echo "[anayaa] Run startup from a normal macOS Terminal or WSL/Linux shell, not a restricted/sandboxed shell:" >&2
+  echo "[anayaa]   cd \"$ROOT\" && ./scripts/anayaa serve" >&2
   exit 1
 }
 
@@ -241,7 +241,7 @@ ensure_postgres() {
     return 0
   fi
   echo "[anayaa] ERROR: PostgreSQL is required but not running at ${host}:${port}." >&2
-  echo "[anayaa] Run: ./scripts/setup_postgres.sh" >&2
+  echo "[anayaa] Run: ./scripts/anayaa setup" >&2
   exit 1
 }
 
@@ -333,11 +333,11 @@ seed_milvus() {
 
   if grep -qi "local cache\\|local_files_only\\|Embedding model is not available" "$seed_log"; then
     echo "[anayaa] ERROR: Milvus is empty, but the embedding model is not cached locally." >&2
-    echo "[anayaa] Connect to Wi-Fi once and run: ./scripts/setup-online.sh" >&2
+    echo "[anayaa] Connect to Wi-Fi once and run: ./scripts/anayaa setup" >&2
     echo "[anayaa] That command installs dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
   else
     echo "[anayaa] ERROR: Milvus/PostgreSQL scripture seed failed." >&2
-    echo "[anayaa] If this is a first-time setup or you recently ran cleanup with --storage/--all, run: ./scripts/setup-online.sh" >&2
+    echo "[anayaa] If this is a first-time setup or you recently ran cleanup with --storage/--all, run: ./scripts/anayaa setup" >&2
   fi
 
   rm -f "$seed_log"

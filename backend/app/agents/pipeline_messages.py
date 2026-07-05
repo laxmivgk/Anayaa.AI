@@ -57,15 +57,48 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
 
     if "grounding_contract" in failed_raw or "citation_grounding" in failed_raw or "context_grounding" in failed_raw:
         return (
-            "Anayaa drafted a response, but it could not verify enough support from the retrieved scripture passages "
-            "to show it as final guidance. Try adding a little more context about the situation, or use The Interactive "
-            "Guidance to choose scriptures that clearly connect to your dilemma, then compile guidance again."
+            "Anayaa retrieved scripture citations, but the drafted guidance did not connect its final advice clearly "
+            "enough to at least two scripture passages. Try adding a little more context about the situation, or use "
+            "The Interactive Guidance to choose scriptures that directly match your dilemma, then compile guidance again."
         )
 
     return (
         "Anayaa drafted a response, but it needs one more review before it can be shown as final guidance. "
         f"Areas needing improvement: {', '.join(failed_display) or 'general alignment'}. "
         "Use The Interactive Guidance to adjust concepts or scripture selections, then compile the guidance again."
+    )
+
+
+def build_hitl_compile_failure_user_message(audit: dict[str, Any], min_score: int) -> str:
+    failed_raw = _failed_dimension_names(audit, min_score)
+    failed_display = _friendly_failure_areas(failed_raw)
+
+    if "harmlessness" in failed_raw:
+        return (
+            "Anayaa used the reviewed scriptures, but the compiled draft still cannot be shown because the safety "
+            "review flagged possible harmful or retaliatory advice. Adjust the concepts toward lawful protection, "
+            "documentation, calm boundaries, and non-retaliation, then compile again."
+        )
+
+    if "privacy" in failed_raw:
+        return (
+            "Anayaa used the reviewed scriptures, but the compiled draft still cannot be shown because the privacy "
+            "review found possible personal identifiers. Remove personal details, keep the dilemma general, and "
+            "compile again."
+        )
+
+    if "grounding_contract" in failed_raw or "citation_grounding" in failed_raw or "context_grounding" in failed_raw:
+        return (
+            "Anayaa used the scriptures selected in Interactive Guidance, but the compiled draft still did not "
+            "connect its final advice clearly enough to at least two selected passages. Select scriptures with a "
+            "closer connection to the dilemma, or add one more specific detail about the situation, then compile again."
+        )
+
+    return (
+        "Anayaa used the reviewed concepts and scriptures, but the compiled draft still needs one more review before "
+        f"it can be shown as final guidance. Areas needing improvement: "
+        f"{', '.join(failed_display) or 'general alignment'}. "
+        "Adjust the selections, then compile again."
     )
 
 

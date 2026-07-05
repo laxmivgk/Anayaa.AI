@@ -57,7 +57,7 @@ Observed local development machine:
 
 | Item | Value |
 | --- | --- |
-| OS | macOS |
+| OS | macOS or Windows through WSL2 Ubuntu |
 | Version | 26.3 |
 | Build | 25D125 |
 | Kernel | Darwin 25.3.0 |
@@ -73,7 +73,7 @@ Observed local versions:
 | Node.js | 25.9.0 | Frontend tooling |
 | npm | 11.12.1 | Frontend package manager |
 | Ollama | client 0.30.10 | Local LLM runtime |
-| PostgreSQL | 14.23 Homebrew | App persistence |
+| PostgreSQL | 14+ local service | App persistence |
 | Redis | 8.8.0 | Sessions, rate limits, cache |
 
 Key Python package versions currently installed:
@@ -106,41 +106,36 @@ Key frontend package versions currently installed:
 
 ## Installation
 
-Install system services on macOS with Homebrew:
+Install system services for your OS:
 
 ```bash
+# macOS
 brew install postgresql@14 redis ollama
 brew services start postgresql@14
 brew services start redis
+
+# WSL/Linux
+sudo apt install postgresql redis-server
+sudo service postgresql start
+sudo service redis-server start
+
 ollama serve
 ```
 
-Install required local models:
+Run the one-time Anayaa setup while Wi-Fi is available:
 
 ```bash
-ollama pull gemma2:2b
-ollama pull llama3.2:3b
+./scripts/anayaa setup
 ```
 
-Install backend and frontend dependencies:
-
-```bash
-cd backend
-python3 -m venv anayaa
-anayaa/bin/python -m pip install -r requirements.txt
-
-cd ../frontend
-npm install
-```
+The setup wrapper prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports the embedding model to ONNX, and seeds retrieval.
 
 ## Setup
 
-Create backend environment:
+The setup wrapper creates the backend environment automatically when needed:
 
 ```bash
-cd backend
-cp .env.example .env
-cd ..
+./scripts/anayaa setup
 ```
 
 Important local settings:
@@ -157,24 +152,12 @@ REACT_LOOP_ENABLED=true
 REACT_MAX_TURNS=2
 ```
 
-Set up PostgreSQL schema:
-
-```bash
-./scripts/setup_postgres.sh
-```
-
-Run the one-time online setup while Wi-Fi is available:
-
-```bash
-./scripts/setup-online.sh
-```
-
 This intentionally downloads and caches Python packages, npm packages, Ollama models, and the configured Hugging Face embedding model, exports the embedding model to ONNX, then seeds scripture data into PostgreSQL and Milvus Lite. After this step, runtime should work without Wi-Fi with `OFFLINE_MODE=true`.
 
-The convenience backend script can also create `.env`, generate a local JWT secret, install backend dependencies, check Ollama models, check PostgreSQL and Redis, and seed Milvus when empty:
+Start the local app with the same command on macOS and WSL/Linux:
 
 ```bash
-./scripts/start-backend.sh
+./scripts/anayaa serve
 ```
 
 ## Execution
@@ -306,14 +289,14 @@ Remove dependency folders as well:
 After `--storage`, reseed data before querying again:
 
 ```bash
-./scripts/start-backend.sh
+./scripts/anayaa setup
 ```
 
 ## Important Side Effects
 
 - `scripts/start-backend.sh` may create or modify `backend/.env`.
 - `scripts/start-backend.sh` auto-generates a local `JWT_SECRET` if the placeholder is unsafe.
-- `scripts/setup-online.sh` is the intentional Wi-Fi step. It can download Python dependencies, npm dependencies, Ollama models, Hugging Face embedding model files, and export the local embedding runtime to ONNX.
+- `scripts/anayaa setup` is the intentional Wi-Fi step. It can download Python dependencies, npm dependencies, Ollama models, Hugging Face embedding model files, export the local embedding runtime to ONNX, and seed retrieval.
 - Runtime is intended to work without Wi-Fi after setup. `OFFLINE_MODE=true` and `EMBEDDING_BACKEND=onnx` force embeddings to load from generated local ONNX assets and fail clearly if setup did not create them yet.
 - `backend/scripts/seed_milvus.py` writes scripture rows to PostgreSQL and embeddings to `backend/data/milvus.db`.
 - Redis stores sessions, rate limits, and semantic cache entries.

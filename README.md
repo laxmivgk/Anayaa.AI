@@ -7,7 +7,7 @@ This project's custom code, notebooks, and architecture are licensed under the [
 However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
 
 # Anayaa.AI
- Anayaa.AI is a local-first, eco-friendly scripture-grounded guidance app for moral and life dilemmas. By implementing edge-optimization parameters Anayaa slashes single-query energy costs to a fraction of a watt-hour (~0.06g CO₂e).
+Anayaa.AI is a local-first, resource-aware scripture-grounded guidance app for moral and life dilemmas. It uses lightweight local models, retrieval caching, and per-request Eco Audit metrics to make compute cost visible and reduce unnecessary generation. Anayaa is eco-conscious, not zero-impact: local AI still uses disk, memory, and energy.
 
 ## Problem
 Anayaa.AI solves the problem of getting thoughtful, grounded guidance for moral and life dilemmas without relying on generic, unsupported chatbot advice. 
@@ -27,17 +27,17 @@ Anayaa uses agents because each step needs a different kind of intelligence:
 - MCP Retriever Tool Agent: searches scripture through a controlled tool boundary using Milvus hybrid search, graph expansion, and reranking.
 - Human-in-the-loop Review: in Interactive Guidance mode, the user can approve concepts, select scripture candidates, or manually add scripture before synthesis.
 - Synthesizer Agent: creates the final guidance in sections: Summary, Reflection, Judgement, Next step, and Scripture grounding.
-- G-Eval / Audit Agent: checks faithfulness, grounding, relevance, harmlessness, privacy, dharma alignment and displays Sustainable Computing metrics and information
+- G-Eval / Audit Agent: checks faithfulness, grounding, relevance, harmlessness, privacy, dharma alignment and displays resource-aware compute metrics
 - Finalizer: returns complete guidance, an approval checkpoint, or a clear failure message if retrieval or synthesis is not safe enough.
 
 Agents uniquely help because moral guidance needs controlled collaboration between reasoning, retrieval, human review, synthesis, and auditing. A single LLM call cannot reliably do all of that with the same safety and traceability.
 
 The project is built for local use with limited resources.
 
-CodeCarbon Real-Time Audit (Sustainable Computing)
-Anayaa promotes eco-conscious and green computing:
-Environmental Impact Tracking: Displays real-time metrics showing the cumulative carbon footprint (in kilograms) and total edge compute energy consumed (in Watt-hours) during local model execution. Per request metrics can be viewed in the Eco Audit tab.
-Power Draft Monitoring: Shows active CPU/GPU power consumption levels to highlight the efficiency benefits of lightweight, quantized on-device architectures.
+CodeCarbon Real-Time Audit (Resource-Aware Computing)
+Anayaa promotes eco-conscious measurement rather than a zero-impact claim:
+Environmental Impact Tracking: Displays estimated cumulative carbon footprint (in kilograms) and total edge compute energy consumed (in Watt-hours) during local model execution. Per-request metrics can be viewed in the Eco Audit tab.
+Power Draft Monitoring: Shows active CPU/GPU power estimates to make local compute cost visible and encourage lightweight, quantized on-device architectures where practical.
 
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
@@ -74,7 +74,7 @@ In Active Pathway:
 3. The user can choose `The Interactive Guidance` or `The Guidance`.
 4. `The Interactive Guidance` pauses before synthesis so the user can adjust concepts, select scripture candidates, or add a manual scripture. Clicking `Compile guidance` locks the interactive controls while the final guidance is generated.
 5. `The Guidance` runs the same pipeline directly without the pre-synthesis review pause.
-6. The query box shows a 4000-character limit. After an answer loads, the query box becomes read-only. The `Next dilemna` button starts the next query.
+6. The query box shows a 4000-character limit. After an answer loads, the query box becomes read-only. The `Next dilemma` button starts the next query.
 7. The login page includes `Forgot password?`; local reset codes are printed to the backend terminal.
 8. The UI shows only user-facing guidance. Internal guidance validation details are not shown.
 9. Scripture Evidence shows only citations that were actually used in the final answer.
@@ -213,6 +213,7 @@ The UI keeps this user-facing:
 |   `-- init.sql
 |-- scripts/
 |   |-- anayaa          # product-style local CLI: setup, serve, doctor, stop, clean
+|   |-- install-anayaa.sh
 |   |-- setup-online.sh
 |   |-- setup_postgres.sh
 |   |-- start-backend.sh
@@ -220,8 +221,29 @@ The UI keeps this user-facing:
 |   |-- run-load-test.sh
 |   |-- pre-merge-checks.sh
 |   `-- free-resources.sh
+|-- INSTALL.md
+|-- PRIVACY.md
+|-- DISCLAIMER.md
 `-- README.md
 ```
+
+## Local-First Public Beta
+
+For an Ollama-style public beta, Anayaa is meant to be installed and run on the user's own machine. The local browser UI talks to `127.0.0.1`, while PostgreSQL, Redis, Milvus Lite, embeddings, scripture data, and Ollama models stay local by default.
+
+Start with:
+
+```bash
+./scripts/install-anayaa.sh
+anayaa setup
+anayaa serve
+```
+
+Read:
+
+- [INSTALL.md](./INSTALL.md) for macOS, Linux, and Windows WSL2 setup.
+- [PRIVACY.md](./PRIVACY.md) for local-first data behavior.
+- [DISCLAIMER.md](./DISCLAIMER.md) before using Anayaa for sensitive real-world dilemmas.
 
 ## Prerequisites
 
@@ -231,6 +253,8 @@ The UI keeps this user-facing:
 - Redis running locally
 - Ollama installed locally
 - Enough disk space for local Python packages, embedding assets, Milvus Lite data, and Ollama models
+
+Windows is supported through WSL2 Ubuntu. Run the same Anayaa commands from the WSL shell; the setup wrapper can start local services through Homebrew on macOS or `service`/`systemctl` on WSL/Linux.
 
 # Verify installation
 python3 --version
@@ -276,13 +300,13 @@ Useful product-style commands:
 
 `scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000. The built frontend is served by FastAPI from `frontend/dist`.
 
-With `OFFLINE_MODE=true`, backend startup does not install missing Python packages from the internet. It uses the existing `backend/anayaa` virtual environment created by `./scripts/setup-online.sh`. If you ran `./scripts/free-resources.sh --all --yes`, reconnect to Wi-Fi and run `./scripts/setup-online.sh` before starting the backend again.
+With `OFFLINE_MODE=true`, backend startup does not install missing Python packages from the internet. It uses the existing `backend/anayaa` virtual environment created by `./scripts/anayaa setup`. If you ran `./scripts/free-resources.sh --all --yes`, reconnect to Wi-Fi and run `./scripts/anayaa setup` before starting the app again.
 
-Milvus Lite must be able to bind a local Unix socket while seeding and serving `backend/data/milvus.db`. Run setup and backend startup from a normal macOS Terminal window. Restricted or sandboxed shells can fail with `Operation not permitted` or `Fail connecting to server on unix:...milvus.db.sock`.
+Milvus Lite must be able to bind a local Unix socket while seeding and serving `backend/data/milvus.db`. Run setup and backend startup from a normal macOS Terminal or WSL/Linux shell. Restricted or sandboxed shells can fail with `Operation not permitted` or `Fail connecting to server on unix:...milvus.db.sock`.
 
-Milvus seeding is idempotent. If the Milvus collection already has vectors, backend startup skips reloading scripture embeddings. If the collection is empty, startup runs `backend/scripts/seed_milvus.py`. In normal offline runtime this works only if the embedding model was already cached by `./scripts/setup-online.sh`; if the cache is missing, `scripts/start-backend.sh` stops with a clear message telling you to reconnect to Wi-Fi and run `./scripts/setup-online.sh`.
+Milvus seeding is idempotent. If the Milvus collection already has vectors, backend startup skips reloading scripture embeddings. If the collection is empty, startup runs `backend/scripts/seed_milvus.py`. In normal offline runtime this works only if the embedding model was already cached by `./scripts/anayaa setup`; if the cache is missing, `scripts/start-backend.sh` stops with a clear message telling you to reconnect to Wi-Fi and run `./scripts/anayaa setup`.
 
-`backend/scripts/seed_milvus.py` itself does not perform full online setup. It upserts scripture rows into PostgreSQL, avoids duplicate graph edges, and seeds or recreates Milvus vectors when the stored vector count does not match the local scripture corpus. Dependency installation, Hugging Face embedding downloads, Ollama model pulls, and first-time cache warming belong to `./scripts/setup-online.sh`.
+`backend/scripts/seed_milvus.py` itself does not perform full online setup. It upserts scripture rows into PostgreSQL, avoids duplicate graph edges, and seeds or recreates Milvus vectors when the stored vector count does not match the local scripture corpus. Dependency installation, Hugging Face embedding downloads, Ollama model pulls, and first-time cache warming belong to `./scripts/anayaa setup`.
 
 The startup scripts expect these local Ollama models:
 
@@ -472,18 +496,18 @@ npm run build
 
 ## Local Operations
 
-Free common local development resources:
+For normal cleanup, use the product CLI:
 
 ```bash
-./scripts/free-resources.sh
+./scripts/anayaa clean
 ```
 
-The cleanup script is intentionally tracked in git. It removes ignored/generated local artifacts such as Python caches, `.pytest_cache`, `.DS_Store`, Vite cache, `frontend/dist`, local startup logs, and orphaned Anayaa backend/frontend/MCP processes.
+This is the safe daily cleanup path. It removes ignored/generated local artifacts such as Python caches, `.pytest_cache`, `.DS_Store`, Vite cache, `frontend/dist`, local startup logs, and orphaned Anayaa backend/frontend/MCP processes. It does not wipe local PostgreSQL/Redis app data, Milvus Lite data, dependency folders, or shared local services.
 
-Use stronger cleanup only when you really want to reclaim more local resources:
+Use full reset cleanup only when you really want to start over from scratch:
 
 ```bash
-./scripts/free-resources.sh --all --yes
+./scripts/anayaa clean --all --yes
 ```
 
 `--all` enables `--services`, `--storage`, and `--deps`. That can stop shared local PostgreSQL, Redis, Ollama, and Milvus ports; wipe Anayaa Redis/PostgreSQL app data; remove the local Milvus Lite DB; and delete dependency folders such as `backend/anayaa`, legacy local virtualenv folders, and `frontend/node_modules`. After `--storage` or `--all`, reconnect to Wi-Fi and run setup/startup again so dependencies, cached assets, and retrieval data are restored:

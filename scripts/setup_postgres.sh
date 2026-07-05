@@ -13,14 +13,29 @@ echo "Setting up PostgreSQL at ${PGHOST}:${PGPORT} ..."
 
 if ! pg_isready -h "$PGHOST" -p "$PGPORT" >/dev/null 2>&1; then
   echo "ERROR: PostgreSQL is not running on ${PGHOST}:${PGPORT}."
-  echo "Start it first, e.g. brew services start postgresql@16"
+  echo "Start it first, then re-run ./scripts/anayaa setup:"
+  echo "  macOS: brew services start postgresql@16"
+  echo "  WSL/Linux: sudo service postgresql start"
   exit 1
 fi
 
-# Use current OS user for bootstrap (works on Homebrew Postgres on macOS)
 BOOTSTRAP_USER="${PGUSER:-$(whoami)}"
+BOOTSTRAP_PSQL=(psql -h "$PGHOST" -p "$PGPORT" -U "$BOOTSTRAP_USER" -d postgres)
 
-psql -h "$PGHOST" -p "$PGPORT" -U "$BOOTSTRAP_USER" -d postgres -v ON_ERROR_STOP=1 <<SQL
+if "${BOOTSTRAP_PSQL[@]}" -c "SELECT 1" >/dev/null 2>&1; then
+  echo "Bootstrapping PostgreSQL as ${BOOTSTRAP_USER}."
+elif command -v sudo >/dev/null 2>&1 && id postgres >/dev/null 2>&1 \
+  && sudo -u postgres psql -p "$PGPORT" -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+  BOOTSTRAP_PSQL=(sudo -u postgres psql -p "$PGPORT" -d postgres)
+  echo "Bootstrapping PostgreSQL as postgres."
+else
+  echo "ERROR: Could not connect to PostgreSQL as a bootstrap user." >&2
+  echo "macOS/Homebrew usually works with your current user: ${BOOTSTRAP_USER}" >&2
+  echo "WSL/Linux usually needs the postgres OS user: sudo -u postgres psql -d postgres" >&2
+  exit 1
+fi
+
+"${BOOTSTRAP_PSQL[@]}" -v ON_ERROR_STOP=1 <<SQL
 DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN

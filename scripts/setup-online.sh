@@ -19,7 +19,7 @@ require_online() {
   fi
 
   echo "[anayaa-online-setup] ERROR: Online setup requires internet access." >&2
-  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ./scripts/setup-online.sh" >&2
+  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ./scripts/anayaa setup" >&2
   echo "[anayaa-online-setup] This step installs Python/npm dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
   exit 1
 }
@@ -50,8 +50,8 @@ PY
 
   echo "[anayaa-online-setup] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
   echo "[anayaa-online-setup] Milvus Lite needs local socket permissions to seed backend/data/milvus.db." >&2
-  echo "[anayaa-online-setup] Run this command from a normal macOS Terminal window, not a restricted/sandboxed shell:" >&2
-  echo "[anayaa-online-setup]   cd \"$ROOT\" && ./scripts/setup-online.sh" >&2
+  echo "[anayaa-online-setup] Run setup from a normal macOS Terminal or WSL/Linux shell, not a restricted/sandboxed shell:" >&2
+  echo "[anayaa-online-setup]   cd \"$ROOT\" && ./scripts/anayaa setup" >&2
   exit 1
 }
 
