@@ -2,8 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.deps import require_auth
+from app.auth.email_delivery import (
+    PasswordResetDeliveryUnavailable,
+    deliver_password_reset,
+    password_reset_delivery_configured,
+)
 from app.auth.identity import verify_identity
-from app.auth.jwt import create_access_token
+from app.auth.jwt import create_access_token, user_history_key
 from app.auth.session import SessionManager
 from app.auth.users import (
     create_password_reset_code,
@@ -59,6 +64,7 @@ async def login(body: LoginBody, request: Request):
         "token": token,
         "expiresInMinutes": expires,
         "email": authenticated_email,
+        "userKey": user_history_key(authenticated_email),
     }
 
 
@@ -70,12 +76,21 @@ async def request_password_reset(body: PasswordResetRequestBody, request: Reques
         raise HTTPException(status_code=400, detail=err)
 
     pg = request.app.state.pg
+    settings = get_settings()
+    if not password_reset_delivery_configured(settings):
+        raise HTTPException(status_code=503, detail="Password reset delivery is not configured.")
+
     reset_code = await create_password_reset_code(pg, email)
     if reset_code:
-        print(f"[anayaa-auth] Password reset code for {email}: {reset_code}", flush=True)
+        try:
+            deliver_password_reset(email, reset_code, settings)
+        except PasswordResetDeliveryUnavailable as exc:
+            raise HTTPException(status_code=503, detail="Could not send password reset instructions.") from exc
+
+    delivery = "email" if settings.smtp_host and settings.smtp_from else "the backend terminal"
     return {
         "success": True,
-        "message": "If this email exists, a reset code was printed in the backend terminal.",
+        "message": f"If this email exists, password reset instructions were sent to {delivery}.",
     }
 
 
@@ -122,4 +137,5 @@ async def refresh(request: Request, user=Depends(require_auth)):
         "token": token,
         "expiresInMinutes": expires,
         "email": email,
+        "userKey": user_history_key(email),
     }

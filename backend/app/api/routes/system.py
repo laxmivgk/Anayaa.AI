@@ -16,6 +16,8 @@ from app.observability.guidance_reasons import build_guidance_reasons
 from app.retrieval.corpus import get_corpus
 from app.resilience.health import check_health, deep_health
 from app.security.harm_normalizer import normalize_harmful_concepts, normalize_harmful_framing_text
+from app.security.privacy_scrubber import detect_sensitive_names, scrub_pii, scrub_pii_response_deep
+from app.security.sanitizer import sanitize_query
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/api", tags=["system"])
@@ -167,7 +169,11 @@ def _should_retry_hitl_compile(audit: dict, citations: list[dict]) -> bool:
     if audit.get("passed") or len(citations) < 2:
         return False
     failed = set(audit.get("failedDimensions") or [])
-    grounding_failed = bool(failed & {"citation_grounding", "context_grounding", "grounding_contract"})
+    min_score = int(audit.get("minScore") or 3)
+    for name, score in (audit.get("scores") or {}).items():
+        if isinstance(score, (int, float)) and score < min_score:
+            failed.add(str(name))
+    grounding_failed = bool(failed & {"citation_grounding", "context_grounding", "grounding_contract", "faithfulness"})
     contract = audit.get("groundingContract") or {}
     contract_failed = bool(
         set(contract.get("failedChecks") or [])
@@ -182,8 +188,11 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
     payload = await resume_checkpoint(pg, body.workflowRunId, body.decision)
     if not payload:
         raise HTTPException(status_code=404, detail="Checkpoint not found.")
+    sensitive_names = detect_sensitive_names(
+        " ".join(str(payload.get(key) or "") for key in ("originalQuery", "rewrittenQuery", "previousContextQuestion"))
+    )
     if body.decision != "approve":
-        return {"success": True, "result": payload}
+        return scrub_pii_response_deep({"success": True, "result": payload}, extra_names=sensitive_names)
 
     hitl = payload.get("hitl") or {}
     if hitl.get("stage") == "pre_synthesis_verification":
@@ -280,12 +289,12 @@ async def hitl_resume(body: HitlBody, request: Request, user=Depends(require_aut
             "confidence": max([item.get("score", 0) for item in payload.get("rerankedCitations", [])] or [payload.get("confidence", 0)]),
             "cacheHit": False,
         }
-        return {"success": True, "result": result}
+        return scrub_pii_response_deep({"success": True, "result": result}, extra_names=sensitive_names)
 
     if body.decision == "approve":
         payload["status"] = "completed"
         payload["moralPathway"] = payload.get("hitl", {}).get("draftPathway") or payload.get("moralPathway")
-    return {"success": True, "result": payload}
+    return scrub_pii_response_deep({"success": True, "result": payload}, extra_names=sensitive_names)
 
 
 @router.get("/eco/daily")
@@ -307,15 +316,20 @@ async def feedback(body: FeedbackBody, request: Request, user=Depends(require_au
     if body.status not in {"FOLLOWED_DHARMA", "STRAYED_FROM_PATH"}:
         raise HTTPException(status_code=400, detail="Invalid feedback status.")
     pg = request.app.state.pg
+    raw_query = sanitize_query(body.query, max_length=800)
+    scrubbed_query = scrub_pii(raw_query, extra_names=detect_sensitive_names(raw_query))
     await pg.execute(
         """
         INSERT INTO feedback_records (request_id, user_email, query, status)
         VALUES ($1, $2, $3, $4)
-        ON CONFLICT (request_id) DO UPDATE SET status = EXCLUDED.status
+        ON CONFLICT (request_id) DO UPDATE SET
+            query = EXCLUDED.query,
+            status = EXCLUDED.status,
+            created_at = NOW()
         """,
         body.requestId,
         user["email"],
-        body.query,
+        scrubbed_query,
         body.status,
     )
     return {"success": True, "message": "Feedback recorded."}

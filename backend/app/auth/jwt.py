@@ -1,5 +1,7 @@
 import re
 import uuid
+import hmac
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import jwt
@@ -26,6 +28,14 @@ def create_access_token(email: str, session_id: str | None = None) -> tuple[str,
     }
     token = jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
     return token, sid, settings.jwt_exp_minutes
+
+
+def user_history_key(email: str) -> str:
+    """Return a stable pseudonymous key for client-side history buckets."""
+    settings = get_settings()
+    normalized = email.strip().lower().encode("utf-8")
+    digest = hmac.new(settings.jwt_secret.encode("utf-8"), normalized, hashlib.sha256).hexdigest()
+    return digest[:32]
 
 
 def decode_access_token(token: str) -> dict | None:

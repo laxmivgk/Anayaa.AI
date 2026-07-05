@@ -10,12 +10,14 @@ People often ask moral or life-guidance questions and receive generic answers th
 
 Anayaa.AI is a local-first FastAPI and React app that:
 
-- Sanitizes and PII-scrubs user input.
+- Sanitizes and PII-scrubs user input, including local named-entity detection for private-person names.
 - Blocks prompt-injection and dangerous patterns.
 - Uses an LLM planner to choose retrieval concepts.
 - Retrieves scripture through an MCP boundary backed by Milvus Lite.
 - Generates guidance with a local Ollama model.
 - Runs an LLM judge plus deterministic grounding contract.
+- Supports standalone new dilemmas and bounded follow-up context from scrubbed recent local questions.
+- Stores user feedback so future planner tone and summary context can reflect whether guidance was helpful.
 - Returns citations, a user-facing "Why this guidance?" section, latency metrics, eco metrics, and explicit failure states.
 
 ## Architecture
@@ -23,7 +25,7 @@ Anayaa.AI is a local-first FastAPI and React app that:
 ```text
 React/Vite frontend
   -> FastAPI backend
-    -> auth, session, rate-limit, sanitizer, firewall, PII scrubber
+    -> auth, session, rate-limit, sanitizer, firewall, PII scrubber, local NER
     -> Google ADK workflow
       -> query optimizer
       -> LLM planner: gemma2:2b
@@ -128,7 +130,7 @@ Run the one-time Anayaa setup while Wi-Fi is available:
 ./scripts/anayaa setup
 ```
 
-The setup wrapper prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports the embedding model to ONNX, and seeds retrieval.
+The setup wrapper prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports the embedding model to ONNX, and seeds retrieval. Rerun it after editing `backend/data/scriptures.json`; setup checks the stored corpus count/checksum/status and rebuilds Milvus embeddings when the corpus changed.
 
 ## Setup
 
@@ -150,9 +152,14 @@ GEMINI_API_KEY=
 ADK_ENABLED=true
 REACT_LOOP_ENABLED=true
 REACT_MAX_TURNS=2
+APP_ENV=local
+PASSWORD_RESET_BASE_URL=http://127.0.0.1:8000
+PII_NER_ENABLED=true
 ```
 
 This intentionally downloads and caches Python packages, npm packages, Ollama models, and the configured Hugging Face embedding model, exports the embedding model to ONNX, then seeds scripture data into PostgreSQL and Milvus Lite. After this step, runtime should work without Wi-Fi with `OFFLINE_MODE=true`.
+
+Password reset delivery is local by default. If SMTP is not configured and `APP_ENV=local`, reset codes and reset links are printed to the backend terminal. For production, set `APP_ENV=production` and configure `SMTP_HOST` plus `SMTP_FROM`; production refuses terminal-only reset delivery.
 
 Start the local app with the same command on macOS and WSL/Linux:
 
@@ -162,7 +169,19 @@ Start the local app with the same command on macOS and WSL/Linux:
 
 ## Execution
 
-Start backend:
+For the normal product-style runtime:
+
+```bash
+./scripts/anayaa serve
+```
+
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+For split frontend/backend development, start backend:
 
 ```bash
 ./scripts/start-backend.sh
@@ -174,11 +193,16 @@ Start frontend in another terminal:
 ./scripts/start-frontend.sh
 ```
 
-Open:
+Then use the Vite URL it prints, usually `http://localhost:5173`.
 
-```text
-http://localhost:5173
-```
+## Current User Flow
+
+1. Sign in with an email and password. Unknown emails self-register; existing emails must use the saved password.
+2. Use `Forgot password?` only with an email that already exists in Anayaa. Reset tokens are stored hashed, expire after 15 minutes, and are revoked after a successful reset.
+3. In Active Pathway, choose `New dilemma` or `Follow-up dilemma` before typing. The query box focuses after a mode is selected.
+4. `Follow-up dilemma` sends up to three scrubbed recent local questions as `previousContext`; it is not full hidden memory.
+5. Choose `The Interactive Guidance` for pre-synthesis review, or `The Guidance` for the direct path.
+6. After completed guidance, use `Helpful` or `Needs work` to save feedback for future planner context.
 
 ## Example To Test
 
@@ -297,10 +321,13 @@ After `--storage`, reseed data before querying again:
 - `scripts/start-backend.sh` may create or modify `backend/.env`.
 - `scripts/start-backend.sh` auto-generates a local `JWT_SECRET` if the placeholder is unsafe.
 - `scripts/anayaa setup` is the intentional Wi-Fi step. It can download Python dependencies, npm dependencies, Ollama models, Hugging Face embedding model files, export the local embedding runtime to ONNX, and seed retrieval.
+- `scripts/anayaa setup` reruns retrieval seeding when corpus status, count, seed version, or checksum drifts from `backend/data/scriptures.json`.
 - Runtime is intended to work without Wi-Fi after setup. `OFFLINE_MODE=true` and `EMBEDDING_BACKEND=onnx` force embeddings to load from generated local ONNX assets and fail clearly if setup did not create them yet.
 - `backend/scripts/seed_milvus.py` writes scripture rows to PostgreSQL and embeddings to `backend/data/milvus.db`.
+- Browser `localStorage` stores the JWT, email, pseudonymous user key, and scrubbed recent question history used by follow-up mode.
+- SMTP password-reset email leaves the local machine through your configured SMTP server when SMTP is enabled.
 - Redis stores sessions, rate limits, and semantic cache entries.
-- PostgreSQL stores turns, audit logs, HITL checkpoints, feedback, eco metrics, and scripture seed state.
+- PostgreSQL stores users, password-reset token hashes, turns, audit logs, HITL checkpoints, feedback, eco metrics, and scripture seed state.
 - PostgreSQL request plan traces in `agent_traces` are retained for `AGENT_TRACES_RETENTION_DAYS` days.
 - `scripts/free-resources.sh --storage` flushes Redis DB, truncates Anayaa PostgreSQL app tables, and removes Milvus Lite DB files.
 - Frontend build writes `frontend/dist`.

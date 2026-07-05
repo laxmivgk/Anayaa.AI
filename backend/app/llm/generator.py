@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from app.agents.pipeline_errors import ServiceUnavailableError, SynthesisRejectedError
+from app.agents.pipeline_errors import PipelineError, ServiceUnavailableError, SynthesisRejectedError
 from app.config import get_settings
 from app.llm.router import select_model
 from app.security.harm_normalizer import normalize_harmful_framing_text
@@ -94,6 +94,32 @@ FOCUS_TERM_ALIASES = {
     "discipline": ["disciplined", "self-control"],
     "scamming": ["scam"],
     "scam": ["scamming"],
+}
+RELATIONSHIP_ROLE_GROUPS = {
+    "friend": {"friend", "friends"},
+    "parent": {"parent", "parents", "mom", "mother", "dad", "father"},
+    "spouse": {"spouse", "partner", "husband", "wife"},
+    "manager": {"manager", "boss", "supervisor"},
+    "coworker": {"coworker", "colleague"},
+    "sibling": {"brother", "sister", "sibling"},
+    "child": {"son", "daughter", "child", "kid", "kids"},
+}
+RELATIONSHIP_ROLE_DISPLAY = {
+    "friend": "friend",
+    "parent": "parent/mom/mother/father",
+    "spouse": "spouse/partner",
+    "manager": "manager/boss",
+    "coworker": "coworker/colleague",
+    "sibling": "brother/sister",
+    "child": "child/kid",
+}
+RELATIONSHIP_DRIFT_PATTERNS = {
+    "parent": re.compile(r"\b(?:your|my|their|the user's)\s+(?:mom|mother|father|dad|parent|parents)\b", re.I),
+    "spouse": re.compile(r"\b(?:your|my|their|the user's)\s+(?:spouse|partner|husband|wife)\b", re.I),
+    "manager": re.compile(r"\b(?:your|my|their|the user's)\s+(?:manager|boss|supervisor)\b", re.I),
+    "coworker": re.compile(r"\b(?:your|my|their|the user's)\s+(?:coworker|colleague)\b", re.I),
+    "sibling": re.compile(r"\b(?:your|my|their|the user's)\s+(?:brother|sister|sibling)\b", re.I),
+    "child": re.compile(r"\b(?:your|my|their|the user's)\s+(?:son|daughter|child|kid)\b", re.I),
 }
 
 
@@ -203,7 +229,7 @@ async def generate_moral_pathway(
                 "memoryUsageMb": None,
             }
             return pathway, metrics
-    except ServiceUnavailableError:
+    except PipelineError:
         raise
     except Exception as exc:
         logger.error("LLM synthesis failed: %s", exc)
@@ -239,6 +265,7 @@ def _build_synthesis_prompt(
     tone = tone_msg or "Balanced guidance mode"
     focus_terms = _query_focus_terms(dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
+    relationship_instruction = _relationship_role_instruction(dilemma)
     caregiver_burnout_instruction = ""
     if _is_caregiver_burnout_dilemma(dilemma):
         caregiver_burnout_instruction = (
@@ -272,6 +299,8 @@ def _build_synthesis_prompt(
         "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
+        f"{relationship_instruction}\n"
+        "If a private name was redacted, never print [NAME_REDACTED] in final guidance.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
         f"{caregiver_burnout_instruction}"
         f"{business_integrity_instruction}"
@@ -329,7 +358,8 @@ def _normalize_answer_section_labels(lines: list[str]) -> str:
     for line in lines:
         if SUMMARY_LABEL_RE.match(line):
             flush_summary()
-            normalized.append(line)
+            summary_text = SUMMARY_LABEL_RE.sub("", line, count=1).strip()
+            normalized.append(f"Summary: {summary_text}" if summary_text else "Summary:")
             saw_summary = True
             continue
 
@@ -360,7 +390,44 @@ def _normalize_answer_section_labels(lines: list[str]) -> str:
         normalized.append(line)
 
     flush_summary()
-    return "\n".join(normalized)
+    return "\n".join(_merge_duplicate_answer_sections(normalized))
+
+
+def _merge_duplicate_answer_sections(lines: list[str]) -> list[str]:
+    """Merge repeated labeled sections from local model drift into one display block per label."""
+    merged: list[str] = []
+    label_index: dict[str, int] = {}
+    for line in lines:
+        summary_match = SUMMARY_LABEL_RE.match(line)
+        match = DETAIL_LABEL_RE.match(line)
+        if summary_match:
+            label = "Summary"
+            text = SUMMARY_LABEL_RE.sub("", line, count=1).strip()
+            rendered = f"{label}: {text}" if text else f"{label}:"
+            if label not in label_index:
+                label_index[label] = len(merged)
+                merged.append(rendered)
+                continue
+            if text:
+                index = label_index[label]
+                merged[index] = f"{merged[index].rstrip()} {text}".strip()
+            continue
+
+        if not match:
+            merged.append(line)
+            continue
+        raw_label = match.group(1).lower()
+        label = BARE_ANSWER_LABELS.get(raw_label, "Summary")
+        text = match.group(2).strip()
+        rendered = f"{label}: {text}" if text else f"{label}:"
+        if label not in label_index:
+            label_index[label] = len(merged)
+            merged.append(rendered)
+            continue
+        if text:
+            index = label_index[label]
+            merged[index] = f"{merged[index].rstrip()} {text}".strip()
+    return merged
 
 
 def _looks_like_short_title(value: str) -> bool:
@@ -430,6 +497,31 @@ def _query_focus_terms(dilemma: str) -> list[str]:
     return terms[:6]
 
 
+def _relationship_role_groups(dilemma: str) -> set[str]:
+    text = _visible_dilemma_text(dilemma).lower()
+    groups: set[str] = set()
+    for group, terms in RELATIONSHIP_ROLE_GROUPS.items():
+        if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms):
+            groups.add(group)
+    return groups
+
+
+def _relationship_role_instruction(dilemma: str) -> str:
+    groups = _relationship_role_groups(dilemma)
+    if not groups:
+        return (
+            "No specific relationship role is confirmed. If a private name was redacted, "
+            "use neutral wording like the other person or them; do not invent mom, parent, spouse, manager, or friend."
+        )
+
+    allowed = ", ".join(RELATIONSHIP_ROLE_DISPLAY[group] for group in sorted(groups))
+    return (
+        f"Known relationship roles from the dilemma: {allowed}. "
+        "If a private name was redacted, use only these confirmed roles or neutral wording like the other person/them. "
+        "Do not change one relationship into another; for example, do not change a friend into a mom, parent, spouse, manager, or coworker."
+    )
+
+
 def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
     pathway_lower = pathway.lower()
     focus_terms = _query_focus_terms(dilemma)
@@ -468,6 +560,8 @@ def _synthesis_rejection_reason(dilemma: str, citations: list[dict[str, Any]], p
         return "prompt_like_response"
     if not re.search(r"^(?:one[- ]line summary|summary)\s*:\s*\S+", pathway, re.I | re.M):
         return "missing_summary_section"
+    if _unsupported_relationship_drift(dilemma, pathway):
+        return "unsupported_relationship_drift"
     if not _is_summary_relevant(dilemma, citations, pathway):
         return "summary_not_relevant_to_query"
     if _is_business_integrity_dilemma(dilemma) and _business_integrity_answer_drifted(pathway):
@@ -477,6 +571,14 @@ def _synthesis_rejection_reason(dilemma: str, citations: list[dict[str, Any]], p
 
 def _contains_prompt_like_response_text(pathway: str) -> bool:
     return bool(PROMPT_LIKE_RESPONSE_RE.search(str(pathway or "")))
+
+
+def _unsupported_relationship_drift(dilemma: str, pathway: str) -> bool:
+    allowed_groups = _relationship_role_groups(dilemma)
+    for group, pattern in RELATIONSHIP_DRIFT_PATTERNS.items():
+        if group not in allowed_groups and pattern.search(str(pathway or "")):
+            return True
+    return False
 
 
 def _business_integrity_answer_drifted(pathway: str) -> bool:
