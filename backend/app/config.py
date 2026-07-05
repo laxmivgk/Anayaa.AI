@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     jwt_secret: str = Field(default="", validation_alias="JWT_SECRET")
     jwt_exp_minutes: int = 15
+    app_env: str = Field(default="local", validation_alias="APP_ENV")
     postgres_host: str = "127.0.0.1"
     postgres_port: int = 5432
     postgres_db: str = "anayaa"
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     hitl_enabled: bool = True
     rate_limit_per_minute: int = 20
     session_refresh_rate_limit_per_minute: int = 10
+    pii_ner_enabled: bool = True
+    pii_ner_model: str = ""
+    pii_ner_local_files_only: bool = True
+    pii_ner_fallback_enabled: bool = True
     scriptures_json_path: str = "data/scriptures.json"
     llmlingua_enabled: bool = False
     llmlingua_model: str = "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank"
@@ -54,6 +59,14 @@ class Settings(BaseSettings):
     hitl_terminal_retention_days: int = 7
     turns_retention_days: int = 30
     retention_cleanup_interval_seconds: int = 86400
+    password_reset_base_url: str = "http://127.0.0.1:8000"
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = ""
+    smtp_use_tls: bool = False
+    smtp_starttls: bool = True
 
     @field_validator("jwt_secret")
     @classmethod

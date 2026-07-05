@@ -1,9 +1,14 @@
+import pytest
+
+from app.agents.pipeline_errors import SynthesisRejectedError
 from app.llm.generator import (
     _build_synthesis_prompt,
     _clean_synthesis_output,
     _is_caregiver_burnout_dilemma,
+    _relationship_role_groups,
     _should_reject_synthesis,
     _synthesis_rejection_reason,
+    generate_moral_pathway,
 )
 
 
@@ -30,6 +35,30 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
     assert "name two exact sources from Citation anchors and reuse at least one anchor keyword from each" in prompt
     assert "Start with a practical verb" not in prompt
     assert "situation-specific moral stance" not in prompt
+
+
+def test_synthesis_prompt_preserves_confirmed_friend_role_after_pii_redaction():
+    dilemma = "I argued with my friend [NAME_REDACTED] and her phone is [PHONE_REDACTED]. I feel guilty. What should I do?"
+    prompt = _build_synthesis_prompt(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "chapter": "Verse",
+                "verse": "5",
+                "translation": "Hatred is never appeased by hatred.",
+                "keywords": ["friendship", "compassion"],
+            }
+        ],
+        "",
+    )
+
+    assert _relationship_role_groups(dilemma) == {"friend"}
+    assert "Known relationship roles from the dilemma: friend." in prompt
+    assert "use only these confirmed roles or neutral wording" in prompt
+    assert "do not change a friend into a mom" in prompt
+    assert "such as your mom, your friend" not in prompt
 
 
 def test_caregiver_burnout_prompt_prioritizes_support_over_business_finances():
@@ -59,6 +88,7 @@ def test_caregiver_burnout_prompt_prioritizes_support_over_business_finances():
     assert "contact one real person today" in prompt
     assert "parent-care coverage" in prompt
     assert "local emergency or crisis support now" in prompt
+    assert "never print [NAME_REDACTED] in final guidance" in prompt
 
 
 def test_clean_synthesis_output_removes_prompt_echo_before_summary():
@@ -82,12 +112,57 @@ def test_clean_synthesis_output_removes_prompt_echo_before_summary():
         )
     )
 
-    assert output.startswith("One-line summary: Dropshipping is not automatically a scam")
+    assert output.startswith("Summary: Dropshipping is not automatically a scam")
     assert "Dilemma:" not in output
     assert "Citation anchors:" not in output
     assert "anchors: duty" not in output
     assert "Write exactly these" not in output
     assert "Use simple everyday words" not in output
+
+
+@pytest.mark.anyio
+async def test_generate_moral_pathway_preserves_synthesis_rejection(monkeypatch):
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "content": (
+                        "Summary: Build steady discipline through a small daily routine.\n"
+                        "Reflection: It is normal to feel scattered.\n"
+                        "Judgement: Choose consistency.\n"
+                        "Next step: Write one task and do it today.\n"
+                        "Scripture grounding: The Bhagavad Gita supports duty."
+                    )
+                },
+                "eval_count": 42,
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr("app.llm.generator.httpx.AsyncClient", FakeAsyncClient)
+
+    with pytest.raises(SynthesisRejectedError) as exc:
+        await generate_moral_pathway(
+            "My mom wants to see me just to get her new clothes. How to deal with this?",
+            [{"source": "Dhammapada", "faith": "Buddhism", "keywords": ["contentment", "relationship"]}],
+        )
+
+    assert exc.value.code == "quality_threshold_not_met"
+    assert exc.value.detail == "summary_not_relevant_to_query"
 
 
 def test_clean_synthesis_output_normalizes_bare_section_labels_and_infers_summary():
@@ -114,6 +189,45 @@ def test_clean_synthesis_output_normalizes_bare_section_labels_and_infers_summar
     assert "Next step: Write one goal" in output
     assert "Scripture grounding: The Bhagavad Gita" in output
     assert _synthesis_rejection_reason("How to be disciplined?", [{"keywords": ["discipline", "duty"]}], output) == ""
+
+
+def test_clean_synthesis_output_merges_duplicate_next_step_sections():
+    output = _clean_synthesis_output(
+        "\n".join(
+            [
+                "Summary: Your friend may need time, but you can stay truthful and gentle.",
+                "Reflection: Anger after hearing the truth can be painful.",
+                "Judgement: Do not chase or punish; choose patience and honesty.",
+                "Next step: Send one short apology that accepts the hurt.",
+                "Next step: Give your friend space and ask to talk when they are ready.",
+                "Scripture grounding: The retrieved scriptures support truth and restraint.",
+            ]
+        )
+    )
+
+    assert output.count("Next step:") == 1
+    assert "Send one short apology" in output
+    assert "Give your friend space" in output
+
+
+def test_clean_synthesis_output_merges_duplicate_summary_sections():
+    output = _clean_synthesis_output(
+        "\n".join(
+            [
+                "One-line summary: Be steady and kind in each role.",
+                "Reflection: Many roles can feel heavy.",
+                "Judgement: Choose goodwill without losing your limits.",
+                "Next step: Pick one caring action today.",
+                "Scripture grounding: The retrieved scriptures support goodwill and duty.",
+                "One-line summary: To be a good wife, mom, daughter, sister, friend, and neighbor, practice goodwill.",
+            ]
+        )
+    )
+
+    assert output.count("Summary:") == 1
+    assert "One-line summary:" not in output
+    assert "Be steady and kind" in output
+    assert "practice goodwill" in output
 
 
 def test_prompt_instruction_as_summary_triggers_synthesis_rejection():
@@ -147,3 +261,26 @@ def test_prompt_like_response_triggers_synthesis_rejection():
 
     assert _should_reject_synthesis("is dropshipping a scam?", [{"keywords": ["integrity", "business"]}], pathway)
     assert _synthesis_rejection_reason("is dropshipping a scam?", [{"keywords": ["integrity", "business"]}], pathway) == "prompt_like_response"
+
+
+def test_synthesis_rejects_mom_drift_for_friend_dilemma_after_pii_redaction():
+    dilemma = "I argued with my friend [NAME_REDACTED] and her phone is [PHONE_REDACTED]. I feel guilty. What should I do?"
+    citations = [
+        {
+            "source": "Dhammapada",
+            "faith": "Buddhism",
+            "keywords": ["friendship", "compassion"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Apologize to your friend with honesty and care.",
+            "Reflection: It is painful to argue with your mom and still feel guilty.",
+            "Judgement: Choose humility and repair with your mom.",
+            "Next step: Send your mom one short apology today.",
+            "Scripture grounding: Dhammapada supports compassion and restraint.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason(dilemma, citations, pathway) == "unsupported_relationship_drift"
+    assert _should_reject_synthesis(dilemma, citations, pathway)

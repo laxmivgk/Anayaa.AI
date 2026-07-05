@@ -69,6 +69,32 @@ def test_synthesizer_unavailable_response_is_explicit():
     assert "no fallback answer" in result["userMessage"].lower()
 
 
+def test_synthesizer_rejected_response_is_quality_review_not_unavailable():
+    result = build_synthesizer_unavailable_response(
+        payload={
+            "dilemma": "Should I tell the truth?",
+            "keywords": ["truth", "anxiety"],
+            "citations": [{"id": "verse-1", "source": "Test"}],
+            "retrievalViaMcp": True,
+        },
+        request_id="req_test",
+        eco_breakdown=[],
+        power_metrics={},
+        detail="LLM synthesis rejected: summary_not_relevant_to_query",
+        user_message=(
+            "Anayaa generated a draft, but it cannot be shown as final guidance because it drifted from your question "
+            "or was not grounded enough in the retrieved scriptures."
+        ),
+        status="quality_threshold_not_met",
+        failure_reason="summary_not_relevant_to_query",
+    )
+
+    assert result["status"] == "quality_threshold_not_met"
+    assert result["failureReason"] == "summary_not_relevant_to_query"
+    assert "unavailable" not in result["userMessage"].lower()
+    assert "drifted from your question" in result["userMessage"]
+
+
 @pytest.mark.anyio
 async def test_judge_unavailable_marks_fallback_clearly(monkeypatch):
     class FailingAsyncClient:

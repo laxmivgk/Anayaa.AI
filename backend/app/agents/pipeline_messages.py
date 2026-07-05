@@ -238,14 +238,16 @@ def build_synthesizer_unavailable_response(
     power_metrics: dict[str, Any],
     detail: str,
     user_message: str | None = None,
+    status: str = "synthesizer_unavailable",
+    failure_reason: str = "synthesizer_service_unavailable",
 ) -> dict[str, Any]:
     return {
-        "status": "synthesizer_unavailable",
+        "status": status,
         "userMessage": user_message or (
             "The guidance synthesizer could not produce a reliable final answer right now. "
             "No fallback answer was shown. Please try again, or use The Interactive Guidance to choose clearer concepts and scriptures."
         ),
-        "failureReason": "synthesizer_service_unavailable",
+        "failureReason": failure_reason,
         "synthesizerError": detail,
         "originalQuery": payload.get("originalQuery") or payload.get("dilemma"),
         "rewrittenQuery": payload.get("rewrittenQuery"),

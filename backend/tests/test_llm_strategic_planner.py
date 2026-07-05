@@ -51,6 +51,31 @@ def test_planner_feedback_summary_does_not_include_user_email():
     assert stats == {"total": 1, "followed": 1, "strayed": 0}
 
 
+def test_planner_feedback_summary_includes_recent_scrubbed_feedback_themes():
+    summary, tone_msg, stats = _planner_feedback_summary(
+        [
+            {
+                "user_email": "lakshmi@example.com",
+                "query": "I argued with my friend [NAME_REDACTED] and felt guilty.",
+                "status": "FOLLOWED_DHARMA",
+            },
+            {
+                "user_email": "lakshmi@example.com",
+                "query": "My manager [NAME_REDACTED] micromanages me and [EMAIL_REDACTED] leaked.",
+                "status": "STRAYED_FROM_PATH",
+            },
+        ]
+    )
+
+    assert "Recently helpful for:" in summary
+    assert "Needs more care for:" in summary
+    assert "[NAME_REDACTED]" in summary
+    assert "[EMAIL_REDACTED]" in summary
+    assert "lakshmi@example.com" not in summary
+    assert tone_msg == "Compassionate Re-Alignment Mode Activated"
+    assert stats == {"total": 2, "followed": 1, "strayed": 1}
+
+
 def test_parse_llm_planner_response_uses_only_llm_keywords():
     planner = _parse_llm_planner_response(
         json.dumps(
