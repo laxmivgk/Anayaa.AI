@@ -42,8 +42,8 @@ Power Draft Monitoring: Shows active CPU/GPU power estimates to make local compu
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
 - Retrieval: scripture JSON corpus, ONNX local embeddings, Milvus hybrid search, graph expansion, reranking
-- Safety: sanitizer, regex firewall, PII scrubber, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
-- Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, local reset-code flow
+- Safety: sanitizer, regex firewall, deterministic PII scrubber with local NER support, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
+- Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, server-side password reset tokens delivered by SMTP email or local terminal fallback
 - Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
 
 
@@ -69,15 +69,18 @@ The frontend has three main tabs.
 
 In Active Pathway:
 
-1. The user logs in with an email address and password. A new email self-registers on first login, while existing emails must use their saved password.
-2. The user enters a dilemma in the query box.
-3. The user can choose `The Interactive Guidance` or `The Guidance`.
-4. `The Interactive Guidance` pauses before synthesis so the user can adjust concepts, select scripture candidates, or add a manual scripture. Clicking `Compile guidance` locks the interactive controls while the final guidance is generated.
-5. `The Guidance` runs the same pipeline directly without the pre-synthesis review pause.
-6. The query box shows a 4000-character limit. After an answer loads, the query box becomes read-only. The `Next dilemma` button starts the next query.
-7. The login page includes `Forgot password?`; local reset codes are printed to the backend terminal.
-8. The UI shows only user-facing guidance. Internal guidance validation details are not shown.
-9. Scripture Evidence shows only citations that were actually used in the final answer.
+1. The user logs in with an email address and password. A new email self-registers on first login, while existing emails must use their saved password. Password fields include an eye icon for reveal/hide.
+2. The Active Pathway tab starts with a choice: `New dilemma` or, when recent local history exists, `Follow-up dilemma`.
+3. After the user chooses a mode, the query box receives focus and accepts the dilemma. The box has a 4000-character limit and locks after an answer loads.
+4. `New dilemma` sends a standalone query. `Follow-up dilemma` sends up to three scrubbed recent local questions as bounded `previousContext`; it is not full hidden memory.
+5. The user can choose `The Interactive Guidance` or `The Guidance`.
+6. `The Interactive Guidance` pauses before synthesis so the user can adjust concepts, select scripture candidates, or add a manual scripture. Clicking `Compile guidance` locks the interactive controls while the final guidance is generated.
+7. `The Guidance` runs the same pipeline directly without the pre-synthesis review pause.
+8. The login page includes `Forgot password?`; the reset form tells users to enter an email that already exists in Anayaa. Reset instructions are emailed when SMTP is configured, or printed to the backend terminal in local mode only.
+9. Completed guidance can be marked `Helpful` or `Needs work`; the backend persists feedback for future planner tone and summary context.
+10. Browser Back from authenticated tabs logs the user out and returns to the login page.
+11. The UI shows only user-facing guidance. Internal guidance validation details are not shown.
+12. Scripture Evidence shows only citations that were actually used in the final answer.
 
 The visible answer is organized around:
 
@@ -99,7 +102,7 @@ React + Vite frontend
 FastAPI backend
     |
     |-- PostgreSQL users, JWT auth, Redis sessions, rate limits
-    |-- sanitizer -> regex firewall -> PII scrubber
+    |-- sanitizer -> regex firewall -> PII scrubber + local NER
     |-- deterministic query rewrite
     |-- LLM planner and bounded ReAct retrieval loop
     |-- MCP retrieval client
@@ -123,7 +126,7 @@ flowchart TD
     A["React + Vite Frontend"] --> B["FastAPI Backend API"]
 
     B --> C["Auth: PostgreSQL Users + JWT Sessions"]
-    B --> D["Security Layer: Sanitizer + Regex Firewall + PII Scrubber"]
+    B --> D["Security Layer: Sanitizer + Regex Firewall + PII Scrubber + Local NER"]
     D --> E["Query Rewriter + Optimizer"]
     E --> F["Planner Agent"]
 
@@ -171,7 +174,7 @@ This keeps scripture retrieval behind a clear tool boundary and makes retrieval 
 
 For interactive compile, the judge evaluates the final answer against the rewritten dilemma plus the selected concepts. This matches the direct guidance path more closely than judging only against the concept list.
 
-Each API query is currently single-turn. The backend does not pass previous conversation context into retrieval or synthesis while multi-turn support is disabled.
+New-dilemma queries are standalone. Follow-up mode can send a bounded `previousContext` payload containing up to three scrubbed recent local questions; the backend sanitizes and firewalls each item before using it to contextualize the rewritten query.
 
 Planner and synthesizer failures are surfaced as explicit workflow statuses instead of silently falling back to deterministic answers. This keeps the system honest when a local model is unavailable, returns invalid JSON, or produces a draft that fails the guidance contract.
 
@@ -201,7 +204,7 @@ The UI keeps this user-facing:
 |   |   |-- memory/          # PostgreSQL, Redis, Milvus helpers
 |   |   |-- observability/   # audit logger, G-Eval judge, grounding contract
 |   |   |-- retrieval/       # corpus, embeddings, hybrid search
-|   |   |-- security/        # sanitizer, firewall, privacy scrubber
+|   |   |-- security/        # sanitizer, firewall, privacy scrubber, local NER
 |   |   `-- main.py
 |   |-- data/                # local scripture and Milvus Lite data
 |   |-- scripts/             # backend utility scripts, user creation, retrieval seeding
@@ -280,7 +283,7 @@ Open:
 - Health: `http://127.0.0.1:8000/api/health`
 - Deep health: `http://127.0.0.1:8000/api/health/deep`
 
-`./scripts/anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. This is also the command to run again after `./scripts/anayaa clean --all --yes`, because `--all` removes storage and dependency folders.
+`./scripts/anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the local corpus changed. This is also the command to run again after `./scripts/anayaa clean --all --yes`, because `--all` removes storage and dependency folders.
 
 `./scripts/anayaa serve` starts the local runtime. It works for normal offline/local use after setup because `OFFLINE_MODE=true` uses cached dependencies, built frontend assets, local Ollama models, ONNX embeddings, and local Milvus Lite data. If you intentionally want serve to repair missing online assets, run:
 
@@ -306,7 +309,7 @@ Milvus Lite must be able to bind a local Unix socket while seeding and serving `
 
 Milvus seeding is idempotent. If the Milvus collection already has vectors, backend startup skips reloading scripture embeddings. If the collection is empty, startup runs `backend/scripts/seed_milvus.py`. In normal offline runtime this works only if the embedding model was already cached by `./scripts/anayaa setup`; if the cache is missing, `scripts/start-backend.sh` stops with a clear message telling you to reconnect to Wi-Fi and run `./scripts/anayaa setup`.
 
-`backend/scripts/seed_milvus.py` itself does not perform full online setup. It upserts scripture rows into PostgreSQL, avoids duplicate graph edges, and seeds or recreates Milvus vectors when the stored vector count does not match the local scripture corpus. Dependency installation, Hugging Face embedding downloads, Ollama model pulls, and first-time cache warming belong to `./scripts/anayaa setup`.
+`backend/scripts/seed_milvus.py` itself does not perform full online setup. It checks the stored corpus status, upserts scripture rows into PostgreSQL, avoids duplicate graph edges, and seeds or recreates Milvus vectors when the stored vector count or checksum does not match the local scripture corpus. Dependency installation, Hugging Face embedding downloads, Ollama model pulls, and first-time cache warming belong to `./scripts/anayaa setup`.
 
 The startup scripts expect these local Ollama models:
 
@@ -341,6 +344,7 @@ The main local settings live in `backend/.env`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
+| `APP_ENV` | `local` | Runtime mode; `production` requires configured password-reset delivery |
 | `JWT_SECRET` | generated locally | Required JWT signing secret, at least 32 characters |
 | `JWT_EXP_MINUTES` | `15` | Access token lifetime |
 | `POSTGRES_ENABLED` | `true` | PostgreSQL is required |
@@ -364,6 +368,18 @@ The main local settings live in `backend/.env`.
 | `HITL_ENABLED` | `true` | Enables interactive pre-synthesis checkpoints |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Query rate limit |
 | `SESSION_REFRESH_RATE_LIMIT_PER_MINUTE` | `10` | Token refresh rate limit |
+| `PASSWORD_RESET_BASE_URL` | `http://127.0.0.1:8000` | Base URL used in emailed password-reset links |
+| `SMTP_HOST` | empty | SMTP host for production password reset email |
+| `SMTP_PORT` | `587` | SMTP port |
+| `SMTP_USERNAME` | empty | SMTP login username, if required |
+| `SMTP_PASSWORD` | empty | SMTP login password, if required |
+| `SMTP_FROM` | empty | From address for password-reset email |
+| `SMTP_USE_TLS` | `false` | Use implicit TLS/SMTPS |
+| `SMTP_STARTTLS` | `true` | Upgrade SMTP connection with STARTTLS |
+| `PII_NER_ENABLED` | `true` | Enables local named-entity detection for privacy scrubbing |
+| `PII_NER_MODEL` | empty | Optional cached Hugging Face NER model; empty uses the lightweight local recognizer |
+| `PII_NER_LOCAL_FILES_ONLY` | `true` | Loads the optional NER model only from local cache |
+| `PII_NER_FALLBACK_ENABLED` | `true` | Falls back to the lightweight recognizer if the optional NER model is unavailable |
 | `LLMLINGUA_ENABLED` | `false` | Optional prompt compression toggle |
 | `LLMLINGUA_MODEL` | `microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank` | Optional compression model |
 | `LLMLINGUA_COMPRESSION_RATE` | `0.5` | Optional prompt compression target |
@@ -387,7 +403,7 @@ Login users are stored in PostgreSQL. Passwords are never stored in `.env`; the 
 
 When a new email logs in for the first time, Anayaa creates that user with the password entered on the login screen. Later logins for that same email must use the saved password. This is local self-registration; no login credentials are stored in `.env`.
 
-If a user forgets their password, click `Forgot password?` on the login screen and request a reset code. The backend prints the one-time code to the local backend terminal; enter that code with a new password to update the account. Reset codes expire after 15 minutes and are stored only as hashes.
+If a user forgets their password, click `Forgot password?` on the login screen and request reset instructions using an email that already exists in Anayaa. The API response remains generic and does not reveal whether the email exists. When the email does exist, Anayaa creates a single-use random reset token, stores only its hash in PostgreSQL, and expires it after 15 minutes. In local mode without SMTP, the backend prints the reset code and link to the local terminal. In production, configure `SMTP_HOST` and `SMTP_FROM` so Anayaa emails the reset code/link; `APP_ENV=production` refuses terminal-only reset delivery.
 
 You can also create or update a local login user from the terminal:
 
@@ -429,13 +445,19 @@ Example query request:
 ```json
 {
   "query": "How can I be disciplined?",
-  "preSynthesisVerification": true
+  "preSynthesisVerification": true,
+  "previousContext": [
+    {
+      "question": "How can I be honest with a friend without being harsh?",
+      "timestamp": "2026-07-05T12:00:00.000Z"
+    }
+  ]
 }
 ```
 
-Use `preSynthesisVerification: true` for Interactive Guidance and `false` for direct Guidance.
+Use `preSynthesisVerification: true` for Interactive Guidance and `false` for direct Guidance. Omit `previousContext` or send an empty list for a new dilemma; send up to three recent scrubbed questions for follow-up mode.
 
-`POST /api/auth/login` self-registers unknown emails with the submitted password. Existing emails require the stored password. `POST /api/auth/password-reset/request` does not reveal whether an email exists; when it does, the reset code is printed to the local backend terminal.
+`POST /api/auth/login` self-registers unknown emails with the submitted password. Existing emails require the stored password. `POST /api/auth/password-reset/request` does not reveal whether an email exists; when it does, reset instructions are delivered by configured SMTP email or, in local mode only, printed to the backend terminal.
 
 Important response fields include:
 
@@ -452,6 +474,8 @@ Important response fields include:
 - `powerMetrics`
 - `transactionLog`
 - `cacheHit`
+- `previousContextUsed`
+- `previousContextQuestion`
 
 Some fields are internal or diagnostic. The frontend intentionally hides validation details that are not useful to the end user.
 

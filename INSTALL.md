@@ -20,7 +20,7 @@ http://127.0.0.1:8000
 
 ## What Setup Does
 
-`anayaa setup` is the one-time online setup. Keep Wi-Fi on for this step. It prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports local ONNX embeddings, and seeds scripture retrieval.
+`anayaa setup` is the one-time online setup. Keep Wi-Fi on for this step. It prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports local ONNX embeddings, and seeds scripture retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the corpus changed.
 
 After setup, normal runtime is local/offline-first:
 
@@ -133,6 +133,8 @@ anayaa setup
 - PostgreSQL, Redis, Milvus Lite, embeddings, scripture data, and Ollama models are local.
 - Cloud LLM routing is disabled unless you explicitly configure a cloud key such as `GEMINI_API_KEY`.
 - No public server is required for normal local use.
+
+Password reset is server-side. In local mode without SMTP, reset instructions are printed to the backend terminal. In production, set `APP_ENV=production` and configure SMTP so reset links/codes are delivered by email; terminal-only reset delivery is refused. Users must enter an email that already exists in Anayaa to receive usable reset instructions.
 
 ## Troubleshooting
 

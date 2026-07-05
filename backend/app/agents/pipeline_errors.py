@@ -28,12 +28,13 @@ class SynthesisRejectedError(PipelineError):
         super().__init__(
             f"LLM synthesis rejected: {detail}",
             user_message=(
-                "Anayaa could not produce a reliable final answer from the local synthesizer. "
-                "The generated draft was rejected because it was off-topic, incomplete, or not grounded enough. "
-                "Try again, or use The Interactive Guidance to choose clearer concepts and scriptures."
+                "Anayaa generated a draft, but it cannot be shown as final guidance because it drifted from your question "
+                "or was not grounded enough in the retrieved scriptures. Try again with one concrete detail, or use "
+                "The Interactive Guidance to choose clearer concepts and scriptures."
             ),
-            code="synthesizer_unavailable",
+            code="quality_threshold_not_met",
         )
+        self.detail = detail
 
 
 class RetrievalError(PipelineError):

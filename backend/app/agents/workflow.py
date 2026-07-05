@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 REWRITE_REPLACEMENTS = {
     r"\bfrnd\b": "friend",
+    r"\bfrend\b": "friend",
     r"\bfreind\b": "friend",
     r"\bfrnds\b": "friends",
     r"\bfam\b": "family",
@@ -27,8 +28,10 @@ REWRITE_REPLACEMENTS = {
     r"\bmsg\b": "message",
     r"\btmrw\b": "tomorrow",
     r"\bbcoz\b": "because",
+    r"\bagan\b": "again",
     r"\bdrops+h+ipping\b": "dropshipping",
     r"\bscaming\b": "scamming",
+    r"\bas\s+you\s+sad\b": "as you said",
 }
 
 # These deterministic term sets keep broad or typo-heavy dilemmas retrievable without inventing facts.
@@ -41,12 +44,14 @@ PLANNER_STOPWORDS = {
     "because",
     "can",
     "could",
+    "doesn",
     "dharma",
     "dilemma",
     "email",
     "email_redacted",
     "ensuring",
     "facts",
+    "follow",
     "handle",
     "harmful",
     "how",
@@ -55,16 +60,20 @@ PLANNER_STOPWORDS = {
     "least",
     "looking",
     "missing",
+    "name_redacted",
     "one",
     "phone",
     "phone_redacted",
     "please",
+    "previous",
     "provided",
+    "question",
     "redacted",
     "should",
     "what",
     "why",
     "will",
+    "wants",
     "situation",
     "sudden",
     "their",
@@ -85,9 +94,14 @@ PLANNER_PRIORITY_TERMS = {
     "affair",
     "anger",
     "anxiety",
+    "affection",
     "betray",
     "betrayal",
     "betrayed",
+    "boundary",
+    "boundaries",
+    "boss",
+    "bosses",
     "business",
     "care",
     "caregiving",
@@ -96,6 +110,9 @@ PLANNER_PRIORITY_TERMS = {
     "company",
     "compassion",
     "conflict",
+    "comfort",
+    "depression",
+    "depressed",
     "dropshipping",
     "duty",
     "financial",
@@ -103,8 +120,14 @@ PLANNER_PRIORITY_TERMS = {
     "forgive",
     "forgiveness",
     "family",
+    "father",
+    "friend",
+    "gift",
+    "guilt",
     "honest",
     "help",
+    "hope",
+    "hopeless",
     "integrity",
     "identity",
     "job",
@@ -112,6 +135,10 @@ PLANNER_PRIORITY_TERMS = {
     "kids",
     "lie",
     "livelihood",
+    "love",
+    "mom",
+    "mother",
+    "manager",
     "need",
     "needs",
     "partner",
@@ -128,16 +155,44 @@ PLANNER_PRIORITY_TERMS = {
     "self",
     "soul",
     "spouse",
+    "stress",
+    "stressed",
     "surprise",
     "survive",
+    "toxic",
     "truth",
     "wealth",
+    "workplace",
 }
 
 PLANNER_TOKEN_ALIASES = {
+    "bosses": "boss",
+    "boundaries": "boundary",
+    "clothes": "gift",
+    "dad": "father",
     "duties": "duty",
+    "depressed": "depression",
+    "guilty": "guilt",
+    "hopeless": "hope",
+    "lied": "lie",
+    "lying": "lie",
+    "mom": "mother",
+    "micro": "manager",
+    "micromanaged": "manager",
+    "micromanaging": "manager",
     "relationships": "relationship",
     "responsibilities": "responsibility",
+    "stressed": "stress",
+}
+PLANNER_CRITICAL_PRIORITY_TERMS = {
+    "affair",
+    "anxiety",
+    "betrayal",
+    "depressed",
+    "depression",
+    "hopeless",
+    "hope",
+    "truth",
 }
 
 MORAL_REWRITE_TERMS = {
@@ -174,10 +229,44 @@ FOLLOW_UP_TERMS = {
     "also",
     "next",
     "same",
-    "that",
     "then",
     "there",
     "this",
+}
+FOLLOW_UP_PRONOUN_TERMS = {
+    "her",
+    "him",
+    "his",
+    "its",
+    "their",
+    "them",
+    "they",
+}
+FOLLOW_UP_PHRASES = {
+    "as you said",
+    "as you suggested",
+    "as anayaa said",
+    "after telling the truth",
+    "stopped talking to me",
+}
+STANDALONE_NEW_TOPIC_PATTERNS = [
+    re.compile(r"\b(?:i|we)\s+(?:met|meet|saw|see|visited|spoke\s+to|talked\s+to)\b", re.I),
+]
+EXPLICIT_STANDALONE_PATTERNS = [
+    re.compile(r"\bthe\s+other\s+day\b", re.I),
+    re.compile(r"^\s*how\s+to\s+\w+", re.I),
+]
+STANDALONE_NEW_TOPIC_TERMS = {
+    "apple",
+    "ceo",
+    "company",
+    "founder",
+    "leader",
+    "manager",
+    "school",
+    "teacher",
+    "office",
+    "workplace",
 }
 
 EXISTENTIAL_IDENTITY_PATTERNS = [
@@ -239,7 +328,8 @@ def _extract_planner_keywords(text: str, limit: int = 6) -> list[str]:
         normalized = PLANNER_TOKEN_ALIASES.get(word, word)
         if (len(normalized) > 4 or normalized in PLANNER_PRIORITY_TERMS) and normalized not in PLANNER_STOPWORDS:
             tokens.append(normalized)
-    priority = [w for w in tokens if w in PLANNER_PRIORITY_TERMS]
+    priority = list(dict.fromkeys(w for w in tokens if w in PLANNER_PRIORITY_TERMS))
+    priority = sorted(priority, key=lambda w: (0 if w in PLANNER_CRITICAL_PRIORITY_TERMS else 1, tokens.index(w)))
     remaining = [w for w in tokens if w not in PLANNER_PRIORITY_TERMS]
     return list(dict.fromkeys([*priority, *remaining]))[:limit]
 
@@ -255,8 +345,28 @@ def _planner_feedback_summary(records: list[dict[str, Any]]) -> tuple[str, str, 
         tone_msg = "Compassionate Re-Alignment Mode Activated"
     elif followed > 0:
         tone_msg = "Steadfast Devotion Mode Activated"
+    followed_queries = [
+        _short_context_text(r.get("query"), max_chars=90)
+        for r in records
+        if r.get("status") == "FOLLOWED_DHARMA" and _short_context_text(r.get("query"), max_chars=90)
+    ][:2]
+    strayed_queries = [
+        _short_context_text(r.get("query"), max_chars=90)
+        for r in records
+        if r.get("status") == "STRAYED_FROM_PATH" and _short_context_text(r.get("query"), max_chars=90)
+    ][:2]
+    recent_notes = []
+    if followed_queries:
+        recent_notes.append(f"Recently helpful for: {' | '.join(followed_queries)}.")
+    if strayed_queries:
+        recent_notes.append(f"Needs more care for: {' | '.join(strayed_queries)}.")
     return (
-        f"Found {len(records)} total interactive feedback entries: {followed} followed dharma matches, {strayed} strayed boundaries.",
+        " ".join(
+            [
+                f"Found {len(records)} total interactive feedback entries: {followed} followed dharma matches, {strayed} strayed boundaries.",
+                *recent_notes,
+            ]
+        ),
         tone_msg,
         stats,
     )
@@ -292,10 +402,20 @@ def _planner_candidate_terms(dilemma: str, optimized_query: str) -> list[str]:
     text = f"{optimized_query} {dilemma}"
     candidates = _extract_planner_keywords(text, limit=10)
     lower = text.lower()
+    if any(term in lower for term in ["mom", "mother", "dad", "father", "parent", "parents", "family"]):
+        candidates.extend(["parent", "family", "compassion", "responsibility"])
+    if any(term in lower for term in ["love", "affection", "unloved", "relationship"]):
+        candidates.extend(["love", "compassion", "relationship", "trust"])
+    if any(term in lower for term in ["clothes", "gift", "money", "wealth", "consumerism"]):
+        candidates.extend(["contentment", "simplicity", "detachment", "trust"])
     if any(term in lower for term in ["lie", "lied", "lying", "truth"]):
         candidates.extend(["honesty", "truth"])
     if any(term in lower for term in ["anxiety", "stressed", "stress"]):
         candidates.extend(["compassion", "protection"])
+    if any(term in lower for term in ["depressed", "depression", "hopeless", "hope", "comfort"]):
+        candidates = ["hope", "comfort", "compassion", "peace", *candidates]
+    if any(term in lower for term in ["boss", "bosses", "manager", "micro-managing", "micromanaging", "toxic", "workplace"]):
+        candidates = ["work", "duty", "stress", "boundary", "toxic", "respect", *candidates]
     if any(term in lower for term in ["discipline", "disciplined"]):
         candidates.extend(["discipline", "self-control", "duty"])
     return list(dict.fromkeys(term for term in candidates if term not in PLANNER_STOPWORDS))[:12]
@@ -407,29 +527,52 @@ def _short_context_text(value: Any, max_chars: int = 280) -> str:
 def _should_use_previous_context(query: str, previous_context: dict[str, Any] | None) -> bool:
     if not previous_context or not _short_context_text(previous_context.get("question")):
         return False
-    lower = query.lower()
+    probe = query
+    for pattern, replacement in REWRITE_REPLACEMENTS.items():
+        probe = re.sub(pattern, replacement, probe, flags=re.IGNORECASE)
+    lower = probe.lower()
     terms = set(re.findall(r"\b[a-zA-Z][a-zA-Z]{2,}\b", lower))
+    if any(phrase in lower for phrase in FOLLOW_UP_PHRASES):
+        return True
+    if any(pattern.search(lower) for pattern in EXPLICIT_STANDALONE_PATTERNS):
+        return False
+    if any(pattern.search(lower) for pattern in STANDALONE_NEW_TOPIC_PATTERNS) and terms & STANDALONE_NEW_TOPIC_TERMS:
+        return False
     if terms & FOLLOW_UP_TERMS:
+        return True
+    if terms & FOLLOW_UP_PRONOUN_TERMS and terms & {"friend", "parent", "parents", "spouse", "partner"}:
+        return True
+    if "what should i say" in lower and terms & {"friend", "parent", "parents", "spouse", "partner", "them", "him", "her"}:
         return True
     if len(terms) <= 5 and any(phrase in lower for phrase in ["what should", "how should", "what now", "what next"]):
         return True
     return False
 
 
+def _previous_context_candidates(previous_context: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not previous_context:
+        return []
+    turns = previous_context.get("turns")
+    if isinstance(turns, list):
+        return [turn for turn in turns[:3] if isinstance(turn, dict)]
+    return [previous_context]
+
+
 def _contextualize_follow_up(query: str, previous_context: dict[str, Any] | None) -> dict[str, Any]:
     original = query.strip()
-    if not _should_use_previous_context(original, previous_context):
+    for candidate in _previous_context_candidates(previous_context):
+        if not _should_use_previous_context(original, candidate):
+            continue
+        previous_question = _short_context_text(candidate.get("question")).replace("[NAME_REDACTED]", "the other person")
         return {
-            "query": original,
-            "previousContextUsed": False,
-            "previousContextQuestion": None,
+            "query": f"Previous dilemma: {previous_question}. Follow-up question: {original}",
+            "previousContextUsed": True,
+            "previousContextQuestion": previous_question,
         }
-
-    previous_question = _short_context_text(previous_context.get("question"))
     return {
-        "query": f"Previous dilemma: {previous_question}. Follow-up question: {original}",
-        "previousContextUsed": True,
-        "previousContextQuestion": previous_question,
+        "query": original,
+        "previousContextUsed": False,
+        "previousContextQuestion": None,
     }
 
 

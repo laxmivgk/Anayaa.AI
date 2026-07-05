@@ -1,15 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, Leaf, LoaderCircle, Lock, LogOut, Shield, Sparkles } from "lucide-react";
+import { BookOpen, CheckCircle2, ChevronDown, ChevronRight, Eye, EyeOff, Leaf, LoaderCircle, Lock, LogOut, MessageSquareWarning, Shield, Sparkles } from "lucide-react";
 
 type Tab = "pathway" | "scriptures" | "eco";
 type LoadingAction = "interactive-guidance" | "guidance" | "compile-guidance" | "cancel-guidance" | null;
+type DilemmaStartMode = "new" | "follow-up" | null;
+type FeedbackStatus = "FOLLOWED_DHARMA" | "STRAYED_FROM_PATH";
 
 const SESSION_WARNING_MS = 60_000;
 const SESSION_REFRESH_THRESHOLD_MS = 5 * 60_000;
 const SESSION_REFRESH_COOLDOWN_MS = 30_000;
-const STORED_CONVERSATION_HISTORY = 2;
-const PREVIOUS_CONVERSATION_LIMIT = 1;
+const STORED_CONVERSATION_HISTORY = 3;
+const PREVIOUS_CONVERSATION_LIMIT = 3;
 const QUERY_CHARACTER_LIMIT = 4000;
+const AUTHENTICATED_HISTORY_STATE = { anayaaView: "authenticated" };
+const CLIENT_EMAIL_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+const CLIENT_PHONE_RE = /(?<!\d)(?:\+?\d{1,3}[-.\s]?)?(?:\(\d{3}\)|\d{3})[-.\s]?\d{3}[-.\s]?\d{4}(?!\d)/g;
+const CLIENT_SSN_RE = /\b\d{3}-\d{2}-\d{4}\b/g;
+const CLIENT_URL_RE = /\b(?:https?:\/\/|mailto:)\S+/gi;
+const CLIENT_PATIENT_ID_RE = /\b((?:patient|medical record|mrn)\s*id\s*:\s*)[A-Za-z0-9_-]+\b/gi;
 
 interface ScriptureVerse {
   id: string;
@@ -75,6 +83,11 @@ interface QueryResult {
   synthesisEngine?: string;
   executionPlan?: string[];
   rerankedCitations?: RetrievalCandidate[];
+  previousContextUsed?: boolean;
+  previousContextQuestion?: string | null;
+  originalQuery?: string;
+  rewrittenQuery?: string;
+  requestId?: string;
 }
 
 interface GuidanceReason {
@@ -108,6 +121,11 @@ interface QuestionHistoryItem {
   timestamp: string;
 }
 
+interface PreviousContextPayload {
+  question: string;
+  timestamp: string;
+}
+
 interface GuidanceSection {
   label?: string;
   text: string;
@@ -119,9 +137,9 @@ interface GuidanceDisplay {
 }
 
 const GUIDANCE_LABELS: Record<string, string> = {
-  "one line summary": "One-line summary",
-  "one-line summary": "One-line summary",
-  summary: "One-line summary",
+  "one line summary": "Summary",
+  "one-line summary": "Summary",
+  summary: "Summary",
   reflection: "Reflection",
   judgment: "Judgement",
   judgement: "Judgement",
@@ -161,6 +179,7 @@ function resultStatusTitle(result?: QueryResult | null): string {
   if (status === "planner_unavailable") return "Guidance Planner Unavailable";
   if (status === "synthesizer_unavailable") return "Guidance Synthesizer Unavailable";
   if (status === "retrieval_unavailable") return "Scripture Retrieval Service Unavailable";
+  if (status === "service_unavailable") return "Service Unavailable";
   if (status === "insufficient_context") return "No Relevant Scripture Context";
   if (status === "quality_threshold_not_met" && failedDimensions.includes("harmlessness")) return "Safety Review Required";
   if (status === "quality_threshold_not_met" && failedDimensions.includes("privacy")) return "Privacy Review Required";
@@ -188,6 +207,23 @@ function llmScoreCheckPassed(audit?: AuditScores | null): boolean {
   if (!audit?.scores) return false;
   const minScore = auditMinScore(audit);
   return Object.values(audit.scores).every((score) => score >= minScore);
+}
+
+function gEvalPendingReason(result?: QueryResult | null): string {
+  if (!result) return "No request has been submitted yet.";
+  if (result.status === "awaiting_pre_synthesis_approval") {
+    return "G-Eval runs after Interactive Guidance compiles a final draft.";
+  }
+  if (result.status === "synthesizer_unavailable" || result.status === "quality_threshold_not_met") {
+    return "G-Eval scores are unavailable because Anayaa did not produce a final guidance draft for the judge to score.";
+  }
+  if (result.status === "retrieval_unavailable" || result.status === "insufficient_context") {
+    return "G-Eval did not run because scripture retrieval did not provide enough grounded context for synthesis.";
+  }
+  if (result.status === "planner_unavailable" || result.status === "service_unavailable") {
+    return "G-Eval did not run because an earlier required service stopped the workflow.";
+  }
+  return "G-Eval scores were not returned for this request.";
 }
 
 function guidanceSections(pathway?: string | null): GuidanceSection[] {
@@ -259,17 +295,41 @@ function guidanceSections(pathway?: string | null): GuidanceSection[] {
 function guidanceDisplay(sections: GuidanceSection[]): GuidanceDisplay {
   const summaryParts: string[] = [];
   const detailSections: GuidanceSection[] = [];
+  const detailIndexByLabel = new Map<string, number>();
   let reachedDetails = false;
 
   for (const section of sections) {
+    if (section.label === "Summary") {
+      if (section.text) summaryParts.push(section.text);
+      continue;
+    }
+
     if (section.label && DETAIL_GUIDANCE_LABELS.has(section.label)) {
       reachedDetails = true;
+      const existingIndex = detailIndexByLabel.get(section.label);
+      if (existingIndex !== undefined) {
+        detailSections[existingIndex] = {
+          ...detailSections[existingIndex],
+          text: `${detailSections[existingIndex].text} ${section.text}`.trim(),
+        };
+        continue;
+      }
+      detailIndexByLabel.set(section.label, detailSections.length);
       detailSections.push(section);
       continue;
     }
 
-    if (!reachedDetails && (!section.label || section.label === "One-line summary")) {
+    if (!reachedDetails && !section.label) {
       summaryParts.push(section.text);
+      continue;
+    }
+
+    if (!section.label && detailSections.length > 0) {
+      const lastIndex = detailSections.length - 1;
+      detailSections[lastIndex] = {
+        ...detailSections[lastIndex],
+        text: `${detailSections[lastIndex].text} ${section.text}`.replace(/\s+/g, " ").trim(),
+      };
       continue;
     }
 
@@ -284,6 +344,10 @@ function guidanceDisplay(sections: GuidanceSection[]): GuidanceDisplay {
 
 function responseText(result?: QueryResult | null): string {
   return result?.moralPathway || result?.hitl?.draftPathway || result?.userMessage || result?.failureReason || "";
+}
+
+function hasFinalAnswerForHistory(result?: QueryResult | null): boolean {
+  return Boolean(result?.moralPathway || result?.hitl?.draftPathway);
 }
 
 function scriptureGroundingText(pathway?: string | null): string {
@@ -331,28 +395,227 @@ function usedCitationsForResult(result?: QueryResult | null): ScriptureVerse[] {
   );
 }
 
-function conversationHistoryKey(userEmail: string): string {
-  return `anayaa_question_history:${userEmail}`;
+function conversationHistoryKey(historyKey: string): string {
+  return `anayaa_question_history:${historyKey}`;
 }
 
-function loadConversationHistory(userEmail: string): QuestionHistoryItem[] {
-  if (!userEmail) return [];
+function normalizeHistoryEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+function conversationHistoryAliasKey(email: string): string {
+  return `anayaa_question_history_alias:${normalizeHistoryEmail(email)}`;
+}
+
+const HISTORY_NAME_FALSE_POSITIVE_PATTERN = "(?:about|action|actions|affection|again|agan|already|also|and|angry|are|as|at|because|before|being|boss|brother|but|by|can|choosing|could|deserve|did|does|doesn|don|even|felt|for|friend|from|had|happy|has|have|her|him|if|in|into|is|it|just|kind|love|manager|me|motivations|my|need|needed|needs|new|not|now|of|on|only|or|partner|parent|past|principles|reciprocate|regardless|respect|said|see|setting|should|show|shows|something|spend|still|stopped|superficial|talking|tell|that|the|than|their|them|then|they|time|to|today|tomorrow|us|was|we|when|who|will|with|would|want|wanted|wants|year|you|your|yours|yourself)";
+const HISTORY_NAME_PATTERNS = [
+  new RegExp(`\\b((?:argued|fight|fought|spoke|talked|messaged|called|texted|apologized)\\s+(?:with|to)\\s+)(?!${HISTORY_NAME_FALSE_POSITIVE_PATTERN}\\b)([A-Za-z][A-Za-z'’-]{1,31})\\b`, "gi"),
+  new RegExp(`\\b((?:meet|met|meeting|see|saw|visit|visited)\\s+)(?!${HISTORY_NAME_FALSE_POSITIVE_PATTERN}\\b)([A-Za-z][A-Za-z'’-]{1,31})\\b`, "gi"),
+  new RegExp(`\\b((?:(?:my|our|his|her|their)\\s+)?(?:close\\s+)?(?:friend|boss|manager|coworker|colleague|partner|spouse|husband|wife|parent|mother|mom|father|dad|brother|sister|son|daughter|teacher|neighbor|roommate|classmate|mentor|client|customer|employee|teammate|cousin|aunt|uncle)(?:\\s+(?:named|called))?\\s+)(?!${HISTORY_NAME_FALSE_POSITIVE_PATTERN}\\b)([A-Za-z][A-Za-z'’-]{1,31})\\b`, "gi"),
+  new RegExp(`\\b((?:(?:my|our|his|her|their)\\s+)?(?:close\\s+)?(?:friend|boss|manager|coworker|colleague|partner|spouse|husband|wife|parent|mother|mom|father|dad|brother|sister|son|daughter|teacher|neighbor|roommate|classmate|mentor|client|customer|employee|teammate|cousin|aunt|uncle)(?:'s\\s+name)?\\s+(?:is|was)\\s+)(?!${HISTORY_NAME_FALSE_POSITIVE_PATTERN}\\b)([A-Za-z][A-Za-z'’-]{1,31}(?:\\s+[A-Z][A-Za-z'’-]{1,31}){0,2})\\b`, "gi"),
+];
+const HISTORY_NAME_BEFORE_ROLE_PATTERNS = [
+  new RegExp(`\\b(?!${HISTORY_NAME_FALSE_POSITIVE_PATTERN}\\b)([A-Za-z][A-Za-z'’-]{1,31}(?:\\s+[A-Z][A-Za-z'’-]{1,31}){0,2})(\\s+(?:is|was)\\s+(?:(?:my|our|his|her|their)\\s+)?(?:close\\s+)?(?:friend|boss|manager|coworker|colleague|partner|spouse|husband|wife|parent|mother|mom|father|dad|brother|sister|son|daughter|teacher|neighbor|roommate|classmate|mentor|client|customer|employee|teammate|cousin|aunt|uncle))\\b`, "gi"),
+];
+const HISTORY_RELATION_MARKER_DISPLAY_RE = /\b((?:(?:my|your|our|his|her|their)\s+)?(?:close\s+)?(?:friend|boss|manager|coworker|colleague|partner|spouse|husband|wife|parent|mother|mom|father|dad|brother|sister|son|daughter|teacher|neighbor|roommate|classmate|mentor|client|customer|employee|teammate|cousin|aunt|uncle))\s+\[NAME_REDACTED\]/gi;
+const HISTORY_VISIT_USER_MARKER_DISPLAY_RE = /\b((?:let|allow|allows|allowed|have|has|had|invite|invites|invited|ask|asks|asked)\s+(?:her|him|them|your\s+(?:mom|mother|dad|father|parent|friend|partner|spouse))\s+(?:meet|see|visit))\s+\[NAME_REDACTED\]/gi;
+const HISTORY_ACTION_MARKER_DISPLAY_RE = /\b(meet|met|meeting|see|saw|visit|visited)\s+\[NAME_REDACTED\]/gi;
+const HISTORY_SELF_TALK_MARKER_DISPLAY_RE = /\b(yourself|myself|ourselves)\s+\[NAME_REDACTED\]\s+(?=you|that|I|we)\b/gi;
+const HISTORY_US_THAT_MARKER_DISPLAY_RE = /\b(us)\s+\[NAME_REDACTED\]\s+(?=[a-z])/gi;
+const HISTORY_MARKER_NAME_TAIL_RE = /\[NAME_REDACTED\](?:\s+[A-Z][A-Za-z-]*(?:['’][A-Za-z-]+)?){1,2}(['’]s|['’])?/g;
+const HISTORY_MARKER_POSSESSIVE_RE = /\[NAME_REDACTED\](?:['’]s|['’])/g;
+const HISTORY_REDUNDANT_MARKER_RE = /(?:\s*\[NAME_REDACTED\]){2,}/g;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function decodeHtmlEntities(value: string): string {
+  return value
+    .replace(/&#x27;|&#39;/gi, "'")
+    .replace(/&quot;/gi, "\"")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&amp;/gi, "&");
+}
+
+function humanizeStoredRedactionMarkers(value: string): string {
+  return value
+    .replace(HISTORY_MARKER_NAME_TAIL_RE, (_match, possessive) => possessive ? "[NAME_REDACTED]'s" : "[NAME_REDACTED]")
+    .replace(HISTORY_MARKER_POSSESSIVE_RE, "the other person's")
+    .replace(HISTORY_RELATION_MARKER_DISPLAY_RE, "$1")
+    .replace(HISTORY_VISIT_USER_MARKER_DISPLAY_RE, "$1 you")
+    .replace(HISTORY_ACTION_MARKER_DISPLAY_RE, "$1 them")
+    .replace(HISTORY_SELF_TALK_MARKER_DISPLAY_RE, "$1 that ")
+    .replace(HISTORY_US_THAT_MARKER_DISPLAY_RE, "$1 that ")
+    .replace(HISTORY_REDUNDANT_MARKER_RE, " [NAME_REDACTED]")
+    .replace(/\[NAME_REDACTED\]/g, "the other person")
+    .replace(/\s+/g, " ")
+    .replace(/\s+([.,!?;:])/g, "$1")
+    .trim();
+}
+
+function sensitiveNamesFromHistoryText(value: string): string[] {
+  const names: string[] = [];
+  for (const pattern of HISTORY_NAME_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of value.matchAll(pattern)) {
+      const name = match[2]?.trim();
+      if (name && !names.some((item) => item.toLowerCase() === name.toLowerCase())) {
+        names.push(name);
+      }
+    }
+  }
+  for (const pattern of HISTORY_NAME_BEFORE_ROLE_PATTERNS) {
+    pattern.lastIndex = 0;
+    for (const match of value.matchAll(pattern)) {
+      const name = match[1]?.trim();
+      if (name && !names.some((item) => item.toLowerCase() === name.toLowerCase())) {
+        names.push(name);
+      }
+    }
+  }
+  return names;
+}
+
+function scrubStoredHistoryText(value: string, extraNames: string[] = []): string {
+  let text = decodeHtmlEntities(value);
+  for (const pattern of HISTORY_NAME_PATTERNS) {
+    text = text.replace(pattern, "$1[NAME_REDACTED]");
+  }
+  for (const pattern of HISTORY_NAME_BEFORE_ROLE_PATTERNS) {
+    text = text.replace(pattern, "[NAME_REDACTED]$2");
+  }
+  for (const name of extraNames) {
+    text = text.replace(new RegExp(`\\b${escapeRegExp(name)}\\b`, "gi"), "[NAME_REDACTED]");
+  }
+  return humanizeStoredRedactionMarkers(text);
+}
+
+function scrubQueryForApi(value: string): string {
+  return scrubStoredHistoryText(value)
+    .replace(CLIENT_URL_RE, "[URL_REDACTED]")
+    .replace(CLIENT_EMAIL_RE, "[EMAIL_REDACTED]")
+    .replace(CLIENT_PHONE_RE, "[PHONE_REDACTED]")
+    .replace(CLIENT_SSN_RE, "[SSN_REDACTED]")
+    .replace(CLIENT_PATIENT_ID_RE, "$1[PATIENT_ID_REDACTED]")
+    .trim();
+}
+
+function scrubStoredHistoryItem(item: QuestionHistoryItem): QuestionHistoryItem {
+  const names = sensitiveNamesFromHistoryText(item.question);
+  return {
+    ...item,
+    question: scrubStoredHistoryText(item.question, names),
+    response: scrubStoredHistoryText(item.response, names),
+  };
+}
+
+function uniqueHistoryKeys(keys: Array<string | null | undefined>): string[] {
+  return keys
+    .map((key) => String(key || "").trim())
+    .filter(Boolean)
+    .filter((key, index, all) => all.indexOf(key) === index);
+}
+
+function historyItemSignature(item: QuestionHistoryItem): string {
+  return `${item.timestamp}|${item.question}|${item.response}`;
+}
+
+function mergeConversationHistoryItems(...groups: QuestionHistoryItem[][]): QuestionHistoryItem[] {
+  const seen = new Set<string>();
+  const merged: QuestionHistoryItem[] = [];
+  for (const group of groups) {
+    for (const rawItem of group) {
+      const item = scrubStoredHistoryItem(rawItem);
+      const signature = item.id || historyItemSignature(item);
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+      merged.push(item);
+    }
+  }
+  return merged
+    .sort((left, right) => new Date(right.timestamp).getTime() - new Date(left.timestamp).getTime())
+    .slice(0, STORED_CONVERSATION_HISTORY);
+}
+
+function readConversationHistory(historyKey: string): QuestionHistoryItem[] {
+  if (!historyKey) return [];
   try {
-    const raw = localStorage.getItem(conversationHistoryKey(userEmail));
+    const raw = localStorage.getItem(conversationHistoryKey(historyKey));
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    const scrubbedItems = parsed
       .filter((item) => item && typeof item.question === "string" && typeof item.response === "string" && typeof item.timestamp === "string")
+      .map(scrubStoredHistoryItem)
       .slice(0, STORED_CONVERSATION_HISTORY);
+    return scrubbedItems;
   } catch {
     return [];
   }
 }
 
-function saveConversationHistory(userEmail: string, items: QuestionHistoryItem[]): void {
-  if (!userEmail) return;
-  localStorage.setItem(conversationHistoryKey(userEmail), JSON.stringify(items.slice(0, STORED_CONVERSATION_HISTORY)));
+function loadConversationHistory(historyKey: string): QuestionHistoryItem[] {
+  const scrubbedItems = readConversationHistory(historyKey);
+  if (historyKey && scrubbedItems.length > 0) {
+    saveConversationHistory(historyKey, scrubbedItems);
+  }
+  return scrubbedItems;
+}
+
+function saveConversationHistory(historyKey: string, items: QuestionHistoryItem[]): void {
+  if (!historyKey) return;
+  const scrubbedItems = items.slice(0, STORED_CONVERSATION_HISTORY).map(scrubStoredHistoryItem);
+  localStorage.setItem(conversationHistoryKey(historyKey), JSON.stringify(scrubbedItems));
+}
+
+function restoreConversationHistoryForLogin(email: string, newKey: string): QuestionHistoryItem[] {
+  if (!newKey) return [];
+  const aliasKey = email ? localStorage.getItem(conversationHistoryAliasKey(email)) : "";
+  const directKeys = uniqueHistoryKeys([newKey, email, aliasKey]);
+  let restored = mergeConversationHistoryItems(...directKeys.map(readConversationHistory));
+
+  if (restored.length === 0) {
+    const historyPrefix = conversationHistoryKey("");
+    const existingBuckets: string[] = [];
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index) || "";
+      if (key.startsWith(historyPrefix)) {
+        existingBuckets.push(key.slice(historyPrefix.length));
+      }
+    }
+    if (existingBuckets.length === 1) {
+      restored = mergeConversationHistoryItems(readConversationHistory(existingBuckets[0]));
+    }
+  }
+
+  if (restored.length > 0) {
+    saveConversationHistory(newKey, restored);
+  }
+  if (email) {
+    localStorage.setItem(conversationHistoryAliasKey(email), newKey);
+    if (normalizeHistoryEmail(email) !== newKey) {
+      localStorage.removeItem(conversationHistoryKey(email));
+    }
+  }
+  return restored;
+}
+
+function buildPreviousContextPayload(items: QuestionHistoryItem[]): PreviousContextPayload[] {
+  return items
+    .map(scrubStoredHistoryItem)
+    .filter((item) => item.question.trim().length > 0)
+    .slice(0, 3)
+    .map((item) => ({
+      question: item.question.trim(),
+      timestamp: item.timestamp,
+    }));
+}
+
+function historyQuestion(result: QueryResult | null | undefined, fallback: string): string {
+  const scrubbed = result?.originalQuery || result?.rewrittenQuery || "";
+  return scrubStoredHistoryText(scrubbed.trim() || fallback.trim());
 }
 
 function scriptureTitle(scripture: ScriptureVerse): string {
@@ -391,13 +654,18 @@ function formatElapsed(seconds: number): string {
 
 export default function App() {
   const savedEmail = localStorage.getItem("anayaa_email") || "";
+  const savedUserKey = localStorage.getItem("anayaa_user_key") || "";
+  const savedHistoryKey = savedUserKey || savedEmail;
   const [token, setToken] = useState<string | null>(localStorage.getItem("anayaa_jwt"));
   const [email, setEmail] = useState(savedEmail);
+  const [historyKey, setHistoryKey] = useState(savedHistoryKey);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "reset">("login");
   const [resetCode, setResetCode] = useState("");
   const [resetPassword, setResetPassword] = useState("");
+  const [showResetPassword, setShowResetPassword] = useState(false);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("pathway");
   const [query, setQuery] = useState("");
@@ -406,8 +674,13 @@ export default function App() {
   const [loadingElapsedSeconds, setLoadingElapsedSeconds] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<QueryResult | null>(null);
+  const [feedbackStatus, setFeedbackStatus] = useState<FeedbackStatus | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [feedbackSubmitting, setFeedbackSubmitting] = useState(false);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [questionHistory, setQuestionHistory] = useState<QuestionHistoryItem[]>(() => loadConversationHistory(savedEmail));
+  const [expandedConversationId, setExpandedConversationId] = useState<string | null>(null);
+  const [questionHistory, setQuestionHistory] = useState<QuestionHistoryItem[]>(() => loadConversationHistory(savedHistoryKey));
+  const [dilemmaStartMode, setDilemmaStartMode] = useState<DilemmaStartMode>(null);
   const [scriptures, setScriptures] = useState<ScriptureVerse[]>([]);
   const [dailyEco, setDailyEco] = useState({ totalEnergyWh: 0, totalCo2Kg: 0, queryCount: 0 });
   const [showSessionWarning, setShowSessionWarning] = useState(false);
@@ -420,6 +693,26 @@ export default function App() {
   const [showManualScripturePicker, setShowManualScripturePicker] = useState(false);
   const refreshPromiseRef = useRef<Promise<string | null> | null>(null);
   const lastSessionRefreshMs = useRef(0);
+  const authHistoryPushedRef = useRef(false);
+  const queryInputRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const resetEmailParam = params.get("resetEmail");
+    const resetCodeParam = params.get("resetCode");
+    if (!resetEmailParam || !resetCodeParam) return;
+
+    setAuthMode("reset");
+    setLoginEmail(resetEmailParam);
+    setResetCode(resetCodeParam);
+    setResetMessage("Enter a new password to finish resetting your account.");
+
+    params.delete("resetEmail");
+    params.delete("resetCode");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}${window.location.hash}`;
+    window.history.replaceState(window.history.state, "", nextUrl);
+  }, []);
 
   const authHeaders = useCallback(
     (jwtToken: string | null = token) => ({
@@ -466,14 +759,24 @@ export default function App() {
     }
     localStorage.setItem("anayaa_jwt", data.token);
     localStorage.setItem("anayaa_email", data.email);
+    const nextHistoryKey = data.userKey || data.email;
+    localStorage.setItem("anayaa_user_key", nextHistoryKey);
+    const restoredHistory = restoreConversationHistoryForLogin(data.email, nextHistoryKey);
     setToken(data.token);
     setEmail(data.email);
+    setHistoryKey(nextHistoryKey);
     setLoginEmail(data.email);
     setLoginPassword("");
+    setActiveTab("pathway");
     setQuery("");
     setResult(null);
     setCurrentConversationId(null);
-    setQuestionHistory(loadConversationHistory(data.email));
+    setExpandedConversationId(null);
+    setFeedbackStatus(null);
+    setFeedbackMessage(null);
+    setFeedbackSubmitting(false);
+    setQuestionHistory(restoredHistory);
+    setDilemmaStartMode(null);
     setShowSessionWarning(false);
     lastSessionRefreshMs.current = Date.now();
   };
@@ -521,18 +824,55 @@ export default function App() {
 
   const handleLogout = useCallback(() => {
     refreshPromiseRef.current = null;
+    authHistoryPushedRef.current = false;
     localStorage.removeItem("anayaa_jwt");
     localStorage.removeItem("anayaa_email");
+    localStorage.removeItem("anayaa_user_key");
     setToken(null);
     setEmail("");
+    setHistoryKey("");
     setLoginPassword("");
     setQuery("");
     setResult(null);
     setCurrentConversationId(null);
+    setExpandedConversationId(null);
+    setFeedbackStatus(null);
+    setFeedbackMessage(null);
+    setFeedbackSubmitting(false);
     setQuestionHistory([]);
+    setDilemmaStartMode(null);
     setShowSessionWarning(false);
     setSecondsUntilExpiry(0);
   }, []);
+
+  useEffect(() => {
+    if (!token) {
+      authHistoryPushedRef.current = false;
+      return;
+    }
+
+    if (!authHistoryPushedRef.current) {
+      window.history.pushState(AUTHENTICATED_HISTORY_STATE, "", window.location.href);
+      authHistoryPushedRef.current = true;
+    }
+
+    const handleBrowserBack = () => {
+      handleLogout();
+    };
+
+    window.addEventListener("popstate", handleBrowserBack);
+    return () => window.removeEventListener("popstate", handleBrowserBack);
+  }, [handleLogout, token]);
+
+  useEffect(() => {
+    if (!token || activeTab !== "pathway" || loadingAction || result || !dilemmaStartMode) return;
+
+    const focusQueryInput = window.requestAnimationFrame(() => {
+      queryInputRef.current?.focus();
+    });
+
+    return () => window.cancelAnimationFrame(focusQueryInput);
+  }, [activeTab, dilemmaStartMode, loadingAction, result, token]);
 
   const refreshSession = useCallback(
     async (options: { force?: boolean; showErrors?: boolean } = {}): Promise<string | null> => {
@@ -578,9 +918,14 @@ export default function App() {
 
           localStorage.setItem("anayaa_jwt", data.token);
           localStorage.setItem("anayaa_email", data.email);
+          const nextHistoryKey = data.userKey || data.email;
+          localStorage.setItem("anayaa_user_key", nextHistoryKey);
+          const restoredHistory = restoreConversationHistoryForLogin(data.email, nextHistoryKey);
           setToken(data.token);
           setEmail(data.email);
-          setQuestionHistory(loadConversationHistory(data.email));
+          setHistoryKey(nextHistoryKey);
+          setQuestionHistory(restoredHistory);
+          setExpandedConversationId(null);
           setShowSessionWarning(false);
           setSecondsUntilExpiry(0);
           lastSessionRefreshMs.current = Date.now();
@@ -672,13 +1017,15 @@ export default function App() {
   }, [result]);
 
   const handleQuery = async (preSynthesisVerification: boolean) => {
-    if (!token || !query.trim()) return;
+    if (!token || !dilemmaStartMode || !query.trim()) return;
     const submittedQuestion = query.trim();
+    const apiQuery = scrubQueryForApi(submittedQuestion);
     setLoadingAction(preSynthesisVerification ? "interactive-guidance" : "guidance");
     setLoadingStartedAt(Date.now());
     setLoadingElapsedSeconds(0);
     setError(null);
     setResult(null);
+    resetFeedbackState();
     setCurrentConversationId(null);
     try {
       const activeToken = await refreshSession();
@@ -687,31 +1034,29 @@ export default function App() {
         method: "POST",
         headers: authHeaders(activeToken),
         body: JSON.stringify({
-          query: query.trim(),
+          query: apiQuery,
           preSynthesisVerification,
+          previousContext: dilemmaStartMode === "follow-up" ? buildPreviousContextPayload(questionHistory) : [],
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         const response = data.userMessage || data.error || data.detail || "Query failed";
         setError(response);
-        if (data.status !== "awaiting_pre_synthesis_approval") {
-          setCurrentConversationId(recordConversation(submittedQuestion, response));
-        }
-        if (data.status && data.status !== "service_unavailable") {
+        if (data.status) {
           setResult(data);
         }
         return;
       }
       setResult(data);
-      if (data.status !== "awaiting_pre_synthesis_approval") {
-        setCurrentConversationId(recordConversation(submittedQuestion, responseText(data) || "No response text returned."));
+      if (data.status !== "awaiting_pre_synthesis_approval" && hasFinalAnswerForHistory(data)) {
+        setCurrentConversationId(recordConversation(historyQuestion(data, submittedQuestion), responseText(data) || "No response text returned."));
       }
       fetchDailyEco(activeToken);
     } catch {
       const response = "Could not reach edge server.";
       setError(response);
-      setCurrentConversationId(recordConversation(submittedQuestion, response));
+      setCurrentConversationId(null);
     } finally {
       setLoadingAction(null);
       setLoadingStartedAt(null);
@@ -725,6 +1070,12 @@ export default function App() {
     setManualScriptureQuery("");
     setSelectedManualScriptureId(null);
     setShowManualScripturePicker(false);
+  };
+
+  const resetFeedbackState = () => {
+    setFeedbackStatus(null);
+    setFeedbackMessage(null);
+    setFeedbackSubmitting(false);
   };
 
   const toggleHitlVerse = (verseId: string) => {
@@ -774,9 +1125,10 @@ export default function App() {
         return;
       }
       const resumed = data.result as QueryResult;
+      resetFeedbackState();
       setResult(resumed);
-      if (decision === "approve") {
-        setCurrentConversationId(recordConversation(query.trim(), responseText(resumed) || "No response text returned."));
+      if (decision === "approve" && hasFinalAnswerForHistory(resumed)) {
+        setCurrentConversationId(recordConversation(historyQuestion(result, query.trim()), responseText(resumed) || "No response text returned."));
       }
       fetchDailyEco(activeToken);
     } catch {
@@ -788,11 +1140,14 @@ export default function App() {
     }
   };
 
-  const handleClearQuery = () => {
+  const handleStartDilemma = (mode: Exclude<DilemmaStartMode, null>) => {
     setQuery("");
     setResult(null);
     setError(null);
+    resetFeedbackState();
     setCurrentConversationId(null);
+    setExpandedConversationId(null);
+    setDilemmaStartMode(mode);
     resetHitlForm();
     setActiveTab("pathway");
   };
@@ -801,7 +1156,9 @@ export default function App() {
     setQuery(value);
     if (result) {
       setResult(null);
+      resetFeedbackState();
       setCurrentConversationId(null);
+      setExpandedConversationId(null);
     }
     if (error) {
       setError(null);
@@ -809,18 +1166,54 @@ export default function App() {
   };
 
   const recordConversation = (question: string, response: string) => {
-    const item = {
+    const item = scrubStoredHistoryItem({
       id: `${Date.now()}`,
       question,
       response,
       timestamp: new Date().toISOString(),
-    };
+    });
     setQuestionHistory((items) => {
       const next = [item, ...items].slice(0, STORED_CONVERSATION_HISTORY);
-      saveConversationHistory(email, next);
+      saveConversationHistory(historyKey, next);
+      if (email) {
+        localStorage.setItem(conversationHistoryAliasKey(email), historyKey);
+      }
       return next;
     });
     return item.id;
+  };
+
+  const handleFeedback = async (status: FeedbackStatus) => {
+    if (!token || !result?.requestId || feedbackSubmitting || !hasFinalAnswerForHistory(result)) return;
+    setFeedbackSubmitting(true);
+    setFeedbackMessage(null);
+    try {
+      const activeToken = await refreshSession();
+      if (!activeToken) {
+        setFeedbackMessage("Please log in again before saving feedback.");
+        return;
+      }
+      const res = await fetch("/api/feedback", {
+        method: "POST",
+        headers: authHeaders(activeToken),
+        body: JSON.stringify({
+          requestId: result.requestId,
+          query: historyQuestion(result, query.trim()),
+          status,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setFeedbackMessage(data.detail || data.error || "Could not save feedback.");
+        return;
+      }
+      setFeedbackStatus(status);
+      setFeedbackMessage(status === "FOLLOWED_DHARMA" ? "Feedback saved as helpful." : "Feedback saved for review.");
+    } catch {
+      setFeedbackMessage("Could not save feedback.");
+    } finally {
+      setFeedbackSubmitting(false);
+    }
   };
 
   useEffect(() => {
@@ -841,10 +1234,19 @@ export default function App() {
   const previousConversations = questionHistory
     .filter((item) => item.id !== currentConversationId)
     .slice(0, PREVIOUS_CONVERSATION_LIMIT);
+  const canAskFollowUp = questionHistory.length > 0;
   const queryLocked = loading || Boolean(result);
   // Once a response exists, users start a fresh dilemma instead of editing the submitted query.
-  const canSubmitQuery = query.trim().length > 0 && !result;
-  const canStartNextQuery = query.length > 0 || Boolean(result) || Boolean(error);
+  const canEditQuery = Boolean(dilemmaStartMode) && !queryLocked;
+  const canSubmitQuery = canEditQuery && query.trim().length > 0;
+  const modeLocked = !result && Boolean(dilemmaStartMode);
+  const canSubmitFeedback = Boolean(
+    result?.requestId &&
+    result.status !== "awaiting_pre_synthesis_approval" &&
+    result.status !== "insufficient_context" &&
+    result.status !== "quality_threshold_not_met" &&
+    hasFinalAnswerForHistory(result)
+  );
   const isPreSynthesisApproval = result?.status === "awaiting_pre_synthesis_approval" && Boolean(result.hitl);
   const hitlSessionLocked = isPreSynthesisApproval && loading;
   const hitlCandidates = result?.hitl?.candidateScriptures || result?.rerankedCitations || [];
@@ -875,25 +1277,41 @@ export default function App() {
               setResetMessage(null);
             }}
             placeholder="your@email.com"
-            className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-4"
+            className={`w-full border border-[#D9D2C5] rounded-xl px-4 py-3 ${authMode === "reset" ? "mb-2" : "mb-4"}`}
           />
+          {authMode === "reset" && (
+            <p className="mb-4 text-xs leading-5 text-stone-500">
+              Use the email already registered in Anayaa to receive reset instructions.
+            </p>
+          )}
           {authMode === "login" ? (
             <>
               <label htmlFor="login-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
                 Password
               </label>
-              <input
-                id="login-password"
-                type="password"
-                required
-                value={loginPassword}
-                onChange={(e) => {
-                  setLoginPassword(e.target.value);
-                  setResetMessage(null);
-                }}
-                placeholder="Enter password"
-                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-3"
-              />
+              <div className="relative mb-3">
+                <input
+                  id="login-password"
+                  type={showLoginPassword ? "text" : "password"}
+                  required
+                  value={loginPassword}
+                  onChange={(e) => {
+                    setLoginPassword(e.target.value);
+                    setResetMessage(null);
+                  }}
+                  placeholder="Enter password"
+                  className="w-full rounded-xl border border-[#D9D2C5] px-4 py-3 pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowLoginPassword((visible) => !visible)}
+                  aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                  title={showLoginPassword ? "Hide password" : "Show password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F5F2ED] hover:text-[#5A5A40]"
+                >
+                  {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -913,7 +1331,7 @@ export default function App() {
                 onClick={handlePasswordResetRequest}
                 className="mb-4 w-full border border-[#5A5A40] text-[#5A5A40] rounded-xl py-3"
               >
-                Request reset code
+                Send reset instructions
               </button>
               <label htmlFor="reset-code" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
                 Reset code
@@ -930,15 +1348,26 @@ export default function App() {
               <label htmlFor="reset-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
                 New password
               </label>
-              <input
-                id="reset-password"
-                type="password"
-                required
-                value={resetPassword}
-                onChange={(e) => setResetPassword(e.target.value)}
-                placeholder="Enter new password"
-                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-3"
-              />
+              <div className="relative mb-3">
+                <input
+                  id="reset-password"
+                  type={showResetPassword ? "text" : "password"}
+                  required
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  placeholder="Enter new password"
+                  className="w-full rounded-xl border border-[#D9D2C5] px-4 py-3 pr-12"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowResetPassword((visible) => !visible)}
+                  aria-label={showResetPassword ? "Hide new password" : "Show new password"}
+                  title={showResetPassword ? "Hide new password" : "Show new password"}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F5F2ED] hover:text-[#5A5A40]"
+                >
+                  {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={() => {
@@ -1061,26 +1490,48 @@ export default function App() {
                 </p>
                 <textarea
                   id="dilemma-query"
+                  ref={queryInputRef}
                   value={query}
                   onChange={(e) => handleQueryChange(e.target.value)}
-                  readOnly={queryLocked}
+                  disabled={!canEditQuery}
                   maxLength={QUERY_CHARACTER_LIMIT}
                   rows={4}
-                  placeholder="Example: I need to be honest with a close friend, but I am worried the truth will hurt them. How can I respond with compassion and integrity?"
-                  className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40] read-only:cursor-default read-only:text-stone-600"
+                  placeholder={
+                    dilemmaStartMode
+                      ? "Example: I need to be honest with a close friend, but I am worried the truth will hurt them. How can I respond with compassion and integrity?"
+                      : canAskFollowUp
+                        ? "Choose New dilemma or Follow-up dilemma first."
+                        : "Choose New dilemma first."
+                  }
+                  className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40] disabled:cursor-default disabled:text-stone-500"
                 />
                 <p className="mt-2 text-right font-mono text-[11px] text-stone-400">
                   {query.length.toLocaleString()} / {QUERY_CHARACTER_LIMIT.toLocaleString()} characters
                 </p>
+                {dilemmaStartMode && !result && (
+                  <p className="mt-2 text-right font-mono text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]">
+                    {dilemmaStartMode === "follow-up" ? "Follow-up mode active" : "New dilemma mode active"}
+                  </p>
+                )}
                 <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
                   <button
-                    onClick={handleClearQuery}
-                    disabled={loading || !canStartNextQuery}
-                    className="text-sm font-bold text-[#5A5A40] underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline"
-                    aria-label="Start next dilemma"
+                    onClick={() => handleStartDilemma("new")}
+                    disabled={loading || (modeLocked && dilemmaStartMode === "follow-up")}
+                    className={`text-sm font-bold underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline ${!result && dilemmaStartMode === "new" ? "text-[#3F4A22]" : "text-[#5A5A40]"}`}
+                    aria-label="Start new dilemma"
                   >
-                    Next dilemma
+                    New dilemma
                   </button>
+                  {canAskFollowUp && (
+                    <button
+                      onClick={() => handleStartDilemma("follow-up")}
+                      disabled={loading || (modeLocked && dilemmaStartMode === "new")}
+                      className={`text-sm font-bold underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline ${!result && dilemmaStartMode === "follow-up" ? "text-[#3F4A22]" : "text-[#5A5A40]"}`}
+                      aria-label="Ask follow-up dilemma"
+                    >
+                      Follow-up dilemma
+                    </button>
+                  )}
                   <button
                     onClick={() => handleQuery(true)}
                     disabled={loading || !canSubmitQuery}
@@ -1282,6 +1733,15 @@ export default function App() {
                     </section>
                   )}
 
+                  {result?.previousContextUsed && result.previousContextQuestion && (
+                    <section className="rounded-2xl border border-[#D9D2C5] bg-white p-4">
+                      <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]">
+                        Continued From Previous Dilemma
+                      </p>
+                      <p className="mt-2 text-sm leading-6 text-stone-700">{scrubStoredHistoryText(result.previousContextQuestion)}</p>
+                    </section>
+                  )}
+
                   {currentPathway && result.status !== "insufficient_context" && result.status !== "quality_threshold_not_met" && (
                     <section className="relative rounded-2xl border-2 border-[#5A5A40] bg-white p-6 shadow-sm">
                       <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#5A5A40] px-4 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-white">
@@ -1320,6 +1780,45 @@ export default function App() {
                     </section>
                   )}
 
+                  {canSubmitFeedback && (
+                    <section className="rounded-2xl border border-[#D9D2C5] bg-white p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <p className="text-sm font-semibold text-[#5A5A40]">Was this guidance helpful?</p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleFeedback("FOLLOWED_DHARMA")}
+                            disabled={feedbackSubmitting}
+                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                              feedbackStatus === "FOLLOWED_DHARMA"
+                                ? "border-emerald-700 bg-emerald-50 text-emerald-800"
+                                : "border-[#D9D2C5] bg-[#FBF9F6] text-[#5A5A40] hover:bg-white"
+                            }`}
+                          >
+                            <CheckCircle2 className="h-4 w-4" />
+                            Helpful
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleFeedback("STRAYED_FROM_PATH")}
+                            disabled={feedbackSubmitting}
+                            className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                              feedbackStatus === "STRAYED_FROM_PATH"
+                                ? "border-amber-700 bg-amber-50 text-amber-800"
+                                : "border-[#D9D2C5] bg-[#FBF9F6] text-[#5A5A40] hover:bg-white"
+                            }`}
+                          >
+                            <MessageSquareWarning className="h-4 w-4" />
+                            Needs work
+                          </button>
+                        </div>
+                      </div>
+                      {feedbackMessage && (
+                        <p className="mt-3 text-xs font-medium text-stone-500">{feedbackMessage}</p>
+                      )}
+                    </section>
+                  )}
+
                   {!isPreSynthesisApproval && usedCitations.length > 0 && (
                     <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
                       <h3 className="font-bold mb-3 flex items-center gap-2">
@@ -1342,22 +1841,36 @@ export default function App() {
               {previousConversations.length > 0 && (
                 <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
                   <h3 className="font-bold mb-4">Previous Conversation</h3>
-                  <div className="space-y-4">
+                  <div className="divide-y divide-[#E5DED2] rounded-xl border border-[#D9D2C5] bg-[#FBF9F6]">
                     {previousConversations.map((item) => {
-                      const responseSections = guidanceSections(item.response);
+                      const safeItem = scrubStoredHistoryItem(item);
+                      const responseSections = guidanceSections(safeItem.response);
                       const historyDisplay = guidanceDisplay(responseSections);
+                      const expanded = expandedConversationId === item.id;
                       return (
-                        <article key={item.id} className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
-                          <p className="font-mono text-[10px] uppercase tracking-wider text-stone-400">
-                            {new Date(item.timestamp).toLocaleString()}
-                          </p>
-                          <div className="mt-3">
-                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Question</p>
-                            <p className="mt-2 text-sm leading-6 text-stone-800">{item.question}</p>
-                          </div>
-                          <div className="mt-4">
-                            <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">Response</p>
-                            <div className="mt-2 text-sm leading-6 text-stone-800">
+                        <article key={item.id}>
+                          <button
+                            type="button"
+                            onClick={() => setExpandedConversationId(expanded ? null : item.id)}
+                            aria-expanded={expanded}
+                            className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-white"
+                          >
+                            {expanded ? (
+                              <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-[#5A5A40]" />
+                            ) : (
+                              <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-[#5A5A40]" />
+                            )}
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-mono text-[10px] uppercase tracking-wider text-stone-400">
+                                {new Date(item.timestamp).toLocaleString()}
+                              </span>
+                              <span className="mt-1 block text-sm font-semibold leading-6 text-[#5A5A40]">
+                                {safeItem.question}
+                              </span>
+                            </span>
+                          </button>
+                          {expanded && (
+                            <div className="border-t border-[#E5DED2] bg-white px-5 py-4 text-sm leading-6 text-stone-800">
                               {historyDisplay.summaryText && <p>{historyDisplay.summaryText}</p>}
                               {historyDisplay.detailSections.length > 0 && (
                                 <div className="mt-3 divide-y divide-[#E5DED2]">
@@ -1374,7 +1887,7 @@ export default function App() {
                                 </div>
                               )}
                             </div>
-                          </div>
+                          )}
                         </article>
                       );
                     })}
@@ -1422,31 +1935,47 @@ export default function App() {
               </section>
             )}
 
-            {result?.auditScores && (
+            {result && (
               <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
                 <h3 className="font-bold mb-2 flex items-center gap-2">
                   <Shield className="w-4 h-4" /> G-Eval Audit
                 </h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between gap-4 font-bold">
-                    <span>Final guidance status</span>
-                    <span className={result.auditScores.passed ? "text-emerald-700" : "text-amber-700"}>
-                      {result.auditScores.passed ? "PASSED" : "NEEDS REVIEW"}
-                    </span>
+                {result.auditScores ? (
+                  <>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between gap-4 font-bold">
+                        <span>Final guidance status</span>
+                        <span className={result.auditScores.passed ? "text-emerald-700" : "text-amber-700"}>
+                          {result.auditScores.passed ? "PASSED" : "NEEDS REVIEW"}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-4">
+                        <span>LLM score check</span>
+                        <span className={llmScoreCheckPassed(result.auditScores) ? "text-emerald-700" : "text-amber-700"}>
+                          {llmScoreCheckPassed(result.auditScores) ? "PASSED" : "NEEDS REVIEW"}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+                      {Object.entries(result.auditScores.scores).map(([k, v]) => (
+                        <div key={k} className="flex justify-between"><span>{k}</span><span>{v}/5</span></div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-stone-500 mt-2">{result.auditScores.rationale}</p>
+                  </>
+                ) : (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between gap-4 font-bold">
+                      <span>Final guidance status</span>
+                      <span className="text-stone-500">NOT RUN</span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span>LLM score check</span>
+                      <span className="text-stone-500">NOT AVAILABLE</span>
+                    </div>
+                    <p className="text-xs text-stone-500">{gEvalPendingReason(result)}</p>
                   </div>
-                  <div className="flex justify-between gap-4">
-                    <span>LLM score check</span>
-                    <span className={llmScoreCheckPassed(result.auditScores) ? "text-emerald-700" : "text-amber-700"}>
-                      {llmScoreCheckPassed(result.auditScores) ? "PASSED" : "NEEDS REVIEW"}
-                    </span>
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-                  {Object.entries(result.auditScores.scores).map(([k, v]) => (
-                    <div key={k} className="flex justify-between"><span>{k}</span><span>{v}/5</span></div>
-                  ))}
-                </div>
-                <p className="text-xs text-stone-500 mt-2">{result.auditScores.rationale}</p>
+                )}
               </section>
             )}
           </div>

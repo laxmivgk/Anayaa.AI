@@ -55,6 +55,18 @@ def test_hitl_compile_retry_targets_grounding_failures_with_two_citations():
     assert _should_retry_hitl_compile(audit, citations) is True
 
 
+def test_hitl_compile_retry_targets_faithfulness_failures_with_two_citations():
+    audit = {
+        "passed": False,
+        "scores": {"faithfulness": 2, "citation_grounding": 4},
+        "minScore": 3,
+        "failedDimensions": [],
+    }
+    citations = [{"id": "a"}, {"id": "b"}]
+
+    assert _should_retry_hitl_compile(audit, citations) is True
+
+
 def test_hitl_compile_retry_does_not_override_safety_or_single_citation_failures():
     safety_audit = {"passed": False, "failedDimensions": ["harmlessness"]}
     grounding_audit = {"passed": False, "failedDimensions": ["citation_grounding"]}
