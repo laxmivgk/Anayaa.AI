@@ -176,6 +176,8 @@ ensure_ollama_models() {
   fi
 
   for model in "${models[@]}"; do
+    # Model pulls are idempotent; a resumed setup should skip anything already
+    # present in the user's local Ollama store.
     if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$model"; then
       log "Ollama model already present: $model"
     else
@@ -195,6 +197,8 @@ cache_embedding_model() {
 seed_retrieval() {
   cd "$BACKEND"
   unset MILVUS_URI
+  # seed_milvus.py owns corpus count/checksum comparison and recreates vectors
+  # when backend/data/scriptures.json changed.
   log "Seeding PostgreSQL and Milvus Lite scripture data..."
   OFFLINE_MODE=false "$VENV_DIR/bin/python" scripts/seed_milvus.py
 }

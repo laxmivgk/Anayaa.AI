@@ -22,6 +22,8 @@ fi
 BOOTSTRAP_USER="${PGUSER:-$(whoami)}"
 BOOTSTRAP_PSQL=(psql -h "$PGHOST" -p "$PGPORT" -U "$BOOTSTRAP_USER" -d postgres)
 
+# Prefer the current OS user on macOS/Homebrew, then fall back to the postgres
+# OS user used by most apt-based Linux and WSL installs.
 if "${BOOTSTRAP_PSQL[@]}" -c "SELECT 1" >/dev/null 2>&1; then
   echo "Bootstrapping PostgreSQL as ${BOOTSTRAP_USER}."
 elif command -v sudo >/dev/null 2>&1 && id postgres >/dev/null 2>&1 \
@@ -38,6 +40,8 @@ fi
 "${BOOTSTRAP_PSQL[@]}" -v ON_ERROR_STOP=1 <<SQL
 DO \$\$
 BEGIN
+  -- Idempotent local role creation lets `anayaa setup` repair password drift
+  -- without requiring users to manually drop databases or roles.
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
     CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';
   ELSE

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Product-style local entrypoint for Anayaa.AI.
+# Product-style local entrypoint for Anayaa.AI. This is the public command that
+# keeps install, setup, serve, doctor, and cleanup on one user-facing path.
 set -euo pipefail
 
 SOURCE="${BASH_SOURCE[0]}"
@@ -71,6 +72,8 @@ build_frontend_if_possible() {
   fi
 
   if [[ "${OFFLINE_MODE:-true}" == "false" ]]; then
+    # Online serve can repair missing frontend assets; normal offline serve only
+    # uses the build prepared by `anayaa setup`.
     log "Frontend build is missing; installing/building because OFFLINE_MODE=false."
     cd "$FRONTEND"
     npm install
@@ -188,7 +191,9 @@ ensure_local_postgres_service() {
     return 0
   fi
 
-  local services=(postgresql@16 postgresql@15 postgresql@14 postgresql)
+  # Homebrew's unversioned postgresql formula advances over time, so probe the
+  # common versioned service names before falling back to the generic name.
+  local services=(postgresql@18 postgresql@17 postgresql@16 postgresql@15 postgresql@14 postgresql)
   local service
   for service in "${services[@]}"; do
     if start_homebrew_service "$service" && wait_for_postgres; then
@@ -207,7 +212,7 @@ ensure_local_postgres_service() {
 
   echo "[anayaa] ERROR: PostgreSQL is not running at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}." >&2
   echo "[anayaa] Start it once, then re-run ./scripts/anayaa setup:" >&2
-  echo "[anayaa]   macOS: brew services start postgresql@16" >&2
+  echo "[anayaa]   macOS: brew install postgresql && brew services start postgresql" >&2
   echo "[anayaa]   WSL/Linux: sudo service postgresql start" >&2
   exit 1
 }
@@ -250,6 +255,8 @@ ensure_local_redis_service() {
 cmd_setup() {
   log "Running one-time local product setup."
   load_env_if_present
+  # Setup owns local service bootstrap plus dependency/model/data preparation.
+  # Serve stays fast by assuming setup has already prepared those assets.
   ensure_local_postgres_service
   ensure_local_redis_service
   "$ROOT/scripts/setup_postgres.sh"
@@ -281,6 +288,8 @@ cmd_serve() {
 
   ensure_local_postgres_service
   ensure_local_redis_service
+  # The first beta support issue was missing frontend/dist; keep this repair
+  # path explicit so users know when setup is required.
   build_frontend_if_possible
   log "Serving Anayaa locally. Open http://${ANAYAA_HOST}:${ANAYAA_PORT}"
   exec "$ROOT/scripts/start-backend.sh"

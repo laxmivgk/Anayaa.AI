@@ -16,6 +16,8 @@ def smtp_configured(settings: Settings) -> bool:
 
 
 def password_reset_delivery_configured(settings: Settings) -> bool:
+    # Local beta can print reset links to the terminal, but production must have
+    # SMTP configured so reset secrets are not exposed in server logs.
     return smtp_configured(settings) or settings.app_env.lower() != "production"
 
 
@@ -54,6 +56,8 @@ def deliver_password_reset(email: str, reset_code: str, settings: Settings) -> s
             "Password reset email delivery is not configured for production."
         )
 
+    # Terminal delivery is intentionally restricted to local mode. The database
+    # stores only reset-token hashes; this print is the local operator channel.
     print(f"[anayaa-auth] Password reset code for {email}: {reset_code}", flush=True)
     print(f"[anayaa-auth] Password reset link for {email}: {reset_link}", flush=True)
     return "terminal"

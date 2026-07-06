@@ -28,6 +28,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     pg = PostgresPool(settings.postgres_dsn)
     redis = RedisCache(settings.redis_url)
+    # Startup verifies every local runtime dependency up front so `anayaa serve`
+    # fails clearly before accepting user guidance requests.
     if not settings.postgres_enabled:
         raise RuntimeError("POSTGRES_ENABLED must be true. PostgreSQL is required.")
     await pg.connect()
@@ -38,6 +40,8 @@ async def lifespan(app: FastAPI):
     get_embedder().embed_query("compassion conflict duty")
     await prewarm_ollama_models()
 
+    # Retrieval itself is served through MCP, but startup still probes Milvus so
+    # an unseeded local beta install is caught immediately.
     milvus = MilvusStore(settings.milvus_uri)
     if not settings.milvus_enabled:
         raise RuntimeError("MILVUS_ENABLED must be true. Milvus is required for retrieval.")
@@ -101,6 +105,8 @@ def create_app() -> FastAPI:
         if assets_dir.exists():
             app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
 
+        # Production-style local serve uses one FastAPI process for API and the
+        # built React app; Vite remains available only for developer workflows.
         @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_frontend(full_path: str):
             requested = FRONTEND_DIST / full_path

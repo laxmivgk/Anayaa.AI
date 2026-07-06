@@ -146,6 +146,8 @@ async def prewarm_ollama_models() -> None:
                         "model": model,
                         "prompt": "ready",
                         "stream": False,
+                        # Keep warmed models resident for the common demo path;
+                        # this reduces the first visible query latency after serve.
                         "keep_alive": "30m",
                         "options": {"temperature": 0.0, "num_predict": 1, "num_ctx": 512},
                     },
@@ -167,6 +169,8 @@ async def generate_moral_pathway(
 ) -> tuple[str, dict[str, Any]]:
     """Generate a moral pathway using a local LLM."""
     if not citations:
+        # Final guidance must be citation-backed. If retrieval did not produce
+        # evidence, the workflow returns an explicit failure state instead.
         raise ServiceUnavailableError(
             "LLM synthesis",
             "no scripture citations were retrieved to ground the response",
@@ -215,6 +219,8 @@ async def generate_moral_pathway(
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             rejection_reason = _synthesis_rejection_reason(safe_dilemma, citations, pathway)
             if rejection_reason:
+                # Do not replace a rejected LLM answer with a canned template; a
+                # visible failure is safer than unsupported moral guidance.
                 logger.warning("LLM synthesis rejected (%s); no fallback answer will be shown", rejection_reason)
                 raise SynthesisRejectedError(rejection_reason)
 
@@ -246,6 +252,8 @@ def _build_synthesis_prompt(
     citation_lines = []
     anchor_lines = []
     for idx, citation in enumerate(citations[:3], start=1):
+        # Anchor keywords give the synthesizer concrete terms it must reuse when
+        # explaining how scripture supports the practical advice.
         keywords = [
             str(keyword).strip().lower()
             for keyword in citation.get("keywords", [])[:4]

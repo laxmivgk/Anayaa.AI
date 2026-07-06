@@ -69,6 +69,9 @@ class McpClientManager:
                 return self._session
 
             try:
+                # The MCP server is a local stdio subprocess, not a network
+                # service. Restarting the subprocess is enough to recover most
+                # transient Milvus Lite handle issues during beta runs.
                 logger.info("Initializing persistent MCP retrieval server subprocess...")
                 stack = AsyncExitStack()
                 params = StdioServerParameters(
@@ -139,6 +142,8 @@ async def retrieve_via_mcp(query: str, keywords: list[str], limit: int = 10, top
     """Run retrieval only through the persistent MCP server process boundary."""
     async with _MCP_RETRIEVAL_LOCK:
         try:
+            # Hybrid search, graph expansion, and reranking are one logical tool
+            # sequence; keep them serialized so local Milvus Lite stays stable.
             hybrid_data, graph_data, candidates, reranked_data = await _run_retrieval_sequence(
                 query,
                 keywords,
@@ -218,6 +223,8 @@ def _merge_candidates(hybrid_data: dict[str, Any], graph_data: dict[str, Any], l
     if any(item.get("method") == "KnowledgeGraph" for item in selected):
         return selected
 
+    # Preserve one strong graph result when vector ranking crowds it out; this
+    # keeps scripture-theme connections visible to the reranker.
     graph_items = [
         item
         for item in graph_data.get("results", [])
