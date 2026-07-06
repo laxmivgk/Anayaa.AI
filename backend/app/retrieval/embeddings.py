@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import json
+import warnings
 from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -209,7 +210,12 @@ def export_onnx_embedding_model(
     dynamic_axes = {name: {0: "batch", 1: "sequence"} for name in input_names}
     dynamic_axes["last_hidden_state"] = {0: "batch", 1: "sequence"}
 
-    with torch.no_grad():
+    with torch.no_grad(), warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            category=torch.jit.TracerWarning,
+            message=r"Converting a tensor to a Python boolean.*",
+        )
         torch.onnx.export(
             TransformerWrapper(transformer),
             tuple(encoded[name] for name in input_names),
