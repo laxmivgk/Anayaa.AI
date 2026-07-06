@@ -7,6 +7,7 @@ BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
 VENV_DIR="$BACKEND/anayaa"
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+CLI_CMD="${ANAYAA_CLI_COMMAND:-./scripts/anayaa}"
 
 log() { echo "[anayaa-online-setup] $*"; }
 warn() { echo "[anayaa-online-setup] WARNING: $*" >&2; }
@@ -19,7 +20,7 @@ require_online() {
   fi
 
   echo "[anayaa-online-setup] ERROR: Online setup requires internet access." >&2
-  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ./scripts/anayaa setup" >&2
+  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ${CLI_CMD} setup" >&2
   echo "[anayaa-online-setup] This step installs Python/npm dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
   exit 1
 }
@@ -51,7 +52,7 @@ PY
   echo "[anayaa-online-setup] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
   echo "[anayaa-online-setup] Milvus Lite needs local socket permissions to seed backend/data/milvus.db." >&2
   echo "[anayaa-online-setup] Run setup from a normal macOS Terminal or WSL/Linux shell, not a restricted/sandboxed shell:" >&2
-  echo "[anayaa-online-setup]   cd \"$ROOT\" && ./scripts/anayaa setup" >&2
+  echo "[anayaa-online-setup]   cd \"$ROOT\" && ${CLI_CMD} setup" >&2
   exit 1
 }
 
@@ -217,7 +218,7 @@ main() {
   cache_embedding_model
   seed_retrieval
   log "Online setup complete. You can now run Anayaa with OFFLINE_MODE=true:"
-  log "  ./scripts/anayaa serve"
+  log "  ${CLI_CMD} serve"
 }
 
 main "$@"

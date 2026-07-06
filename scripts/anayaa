@@ -18,14 +18,26 @@ BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
 VENV_PY="$BACKEND/anayaa/bin/python"
 
+detect_cli_command() {
+  local invoked="${0:-}"
+  if [[ "$(basename "$invoked")" == "anayaa" && "$invoked" != */scripts/anayaa ]]; then
+    echo "anayaa"
+  else
+    echo "./scripts/anayaa"
+  fi
+}
+
+CLI_CMD="${ANAYAA_CLI_COMMAND:-$(detect_cli_command)}"
+export ANAYAA_CLI_COMMAND="$CLI_CMD"
+
 log() { echo "[anayaa] $*"; }
 ok() { echo "[anayaa] OK: $*"; }
 warn() { echo "[anayaa] WARNING: $*" >&2; }
 fail() { echo "[anayaa] MISSING: $*" >&2; DOCTOR_FAILED=true; }
 
 usage() {
-  cat <<'EOF'
-Usage: ./scripts/anayaa <command> [options]
+  cat <<EOF
+Usage: ${CLI_CMD} <command> [options]
 
 Commands:
   setup             One-time online setup: local services, deps, models, embeddings, retrieval seed, frontend build
@@ -42,13 +54,13 @@ Serve options:
   --reload          Start FastAPI with reload for development
 
 Examples:
-  ./scripts/anayaa setup
-  ./scripts/anayaa serve
-  ./scripts/anayaa serve --online
-  ./scripts/anayaa doctor
-  ./scripts/anayaa release-check
-  ./scripts/anayaa stop
-  ./scripts/anayaa clean --all --yes
+  ${CLI_CMD} setup
+  ${CLI_CMD} serve
+  ${CLI_CMD} serve --online
+  ${CLI_CMD} doctor
+  ${CLI_CMD} release-check
+  ${CLI_CMD} stop
+  ${CLI_CMD} clean --all --yes
 EOF
 }
 
@@ -90,9 +102,9 @@ build_frontend_if_possible() {
 
   echo "[anayaa] ERROR: frontend/dist is missing." >&2
   echo "[anayaa] Run online setup once:" >&2
-  echo "[anayaa]   ./scripts/anayaa setup" >&2
+  echo "[anayaa]   ${CLI_CMD} setup" >&2
   echo "[anayaa] Then start local Anayaa:" >&2
-  echo "[anayaa]   ./scripts/anayaa serve" >&2
+  echo "[anayaa]   ${CLI_CMD} serve" >&2
   exit 1
 }
 
@@ -211,7 +223,7 @@ ensure_local_postgres_service() {
   done
 
   echo "[anayaa] ERROR: PostgreSQL is not running at ${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}." >&2
-  echo "[anayaa] Start it once, then re-run ./scripts/anayaa setup:" >&2
+  echo "[anayaa] Start it once, then re-run ${CLI_CMD} setup:" >&2
   echo "[anayaa]   macOS: brew install postgresql && brew services start postgresql" >&2
   echo "[anayaa]   WSL/Linux: sudo service postgresql start" >&2
   exit 1
@@ -246,7 +258,7 @@ ensure_local_redis_service() {
   fi
 
   echo "[anayaa] ERROR: Redis is not running at ${REDIS_URL:-redis://127.0.0.1:6379/0}." >&2
-  echo "[anayaa] Start it once, then re-run ./scripts/anayaa setup:" >&2
+  echo "[anayaa] Start it once, then re-run ${CLI_CMD} setup:" >&2
   echo "[anayaa]   macOS: brew services start redis" >&2
   echo "[anayaa]   WSL/Linux: sudo service redis-server start" >&2
   exit 1
@@ -262,7 +274,7 @@ cmd_setup() {
   "$ROOT/scripts/setup_postgres.sh"
   "$ROOT/scripts/setup-online.sh"
   log "Setup complete. Start Anayaa with:"
-  log "  ./scripts/anayaa serve"
+  log "  ${CLI_CMD} serve"
 }
 
 cmd_serve() {
@@ -345,7 +357,7 @@ check_script_hygiene() {
 
 check_python_deps() {
   if [[ ! -x "$VENV_PY" ]]; then
-    fail "backend/anayaa Python environment missing; run ./scripts/anayaa setup"
+    fail "backend/anayaa Python environment missing; run ${CLI_CMD} setup"
     return 0
   fi
 
@@ -370,7 +382,7 @@ PY
   then
     ok "backend Python dependencies installed"
   else
-    fail "backend Python dependencies incomplete; run ./scripts/anayaa setup"
+    fail "backend Python dependencies incomplete; run ${CLI_CMD} setup"
   fi
 }
 
@@ -435,19 +447,19 @@ check_assets() {
   if frontend_build_ready; then
     ok "frontend build present at frontend/dist"
   else
-    fail "frontend build missing; run ./scripts/anayaa setup"
+    fail "frontend build missing; run ${CLI_CMD} setup"
   fi
 
   if [[ -d "$BACKEND/data/onnx_embeddings" ]]; then
     ok "ONNX embedding assets present"
   else
-    fail "ONNX embedding assets missing; run ./scripts/anayaa setup"
+    fail "ONNX embedding assets missing; run ${CLI_CMD} setup"
   fi
 
   if [[ -f "$BACKEND/data/milvus.db" ]]; then
     ok "Milvus Lite data present"
   else
-    fail "Milvus Lite data missing; run ./scripts/anayaa setup"
+    fail "Milvus Lite data missing; run ${CLI_CMD} setup"
   fi
 }
 
@@ -469,10 +481,10 @@ cmd_doctor() {
 
   if [[ "$DOCTOR_FAILED" == true ]]; then
     echo "[anayaa] Doctor found missing requirements. For first-time or repaired setup run:" >&2
-    echo "[anayaa]   ./scripts/anayaa setup" >&2
+    echo "[anayaa]   ${CLI_CMD} setup" >&2
     exit 1
   fi
-  log "Doctor passed. Start Anayaa with: ./scripts/anayaa serve"
+  log "Doctor passed. Start Anayaa with: ${CLI_CMD} serve"
 }
 
 cmd_release_check() {

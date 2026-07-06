@@ -666,6 +666,7 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showFirstTimeHelp, setShowFirstTimeHelp] = useState(false);
   const [authMode, setAuthMode] = useState<"login" | "reset">("login");
   const [resetCode, setResetCode] = useState("");
   const [resetPassword, setResetPassword] = useState("");
@@ -1270,6 +1271,24 @@ export default function App() {
         <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
           <h1 className="text-4xl italic mb-3">Anayaa.AI</h1>
           <p className="mb-6 text-sm text-stone-500">Dharma-driven, resource-aware edge guidance</p>
+          {authMode === "login" && (
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={() => setShowFirstTimeHelp((visible) => !visible)}
+                aria-expanded={showFirstTimeHelp}
+                aria-controls="first-time-login-help"
+                className="mx-auto block text-center text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+              >
+                First time user?
+              </button>
+              {showFirstTimeHelp && (
+                <p id="first-time-login-help" className="mt-2 rounded-xl border border-[#D9D2C5] bg-[#F8F5EF] px-4 py-3 text-xs leading-5 text-[#5A5A40]">
+                  Enter any valid email and a password of at least 8 characters. Use that same email and password for future sign-ins; no separate sign-up or registration is required.
+                </p>
+              )}
+            </div>
+          )}
           <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
             Email
           </label>
