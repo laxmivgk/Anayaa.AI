@@ -2,7 +2,17 @@
 # Product-style local entrypoint for Anayaa.AI.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SOURCE" ]]; do
+  SOURCE_DIR="$(cd -P "$(dirname "$SOURCE")" && pwd)"
+  LINK_TARGET="$(readlink "$SOURCE")"
+  if [[ "$LINK_TARGET" == /* ]]; then
+    SOURCE="$LINK_TARGET"
+  else
+    SOURCE="$SOURCE_DIR/$LINK_TARGET"
+  fi
+done
+ROOT="$(cd "$(dirname "$SOURCE")/.." && pwd)"
 BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
 VENV_PY="$BACKEND/anayaa/bin/python"
@@ -20,6 +30,7 @@ Commands:
   setup             One-time online setup: local services, deps, models, embeddings, retrieval seed, frontend build
   serve             Start local Anayaa at http://127.0.0.1:8000
   doctor            Check local runtime prerequisites and cached assets
+  release-check     Run doctor plus compile/tests/frontend build checks
   stop              Stop Anayaa app processes without deleting local assets
   clean             Run the existing cleanup script; pass through cleanup options
   help              Show this help
@@ -34,6 +45,7 @@ Examples:
   ./scripts/anayaa serve
   ./scripts/anayaa serve --online
   ./scripts/anayaa doctor
+  ./scripts/anayaa release-check
   ./scripts/anayaa stop
   ./scripts/anayaa clean --all --yes
 EOF
@@ -284,6 +296,44 @@ check_command() {
   fi
 }
 
+is_wsl() {
+  grep -qi microsoft /proc/version 2>/dev/null
+}
+
+check_wsl_hygiene() {
+  if is_wsl && [[ "$ROOT" == /mnt/* ]]; then
+    fail "WSL install is under /mnt; move or reinstall Anayaa under the Linux filesystem, for example ~/Anayaa.AI or ~/.anayaa/Anayaa.AI"
+  elif is_wsl; then
+    ok "WSL path is inside the Linux filesystem"
+  fi
+}
+
+check_script_hygiene() {
+  local scripts=(
+    "$ROOT/scripts/anayaa"
+    "$ROOT/scripts/install-anayaa.sh"
+    "$ROOT/scripts/setup-online.sh"
+    "$ROOT/scripts/setup_postgres.sh"
+    "$ROOT/scripts/start-backend.sh"
+    "$ROOT/scripts/free-resources.sh"
+    "$ROOT/scripts/pre-merge-checks.sh"
+  )
+
+  local script
+  for script in "${scripts[@]}"; do
+    if [[ ! -f "$script" ]]; then
+      fail "required script missing: ${script#$ROOT/}"
+      continue
+    fi
+    if [[ ! -x "$script" ]]; then
+      fail "required script is not executable: ${script#$ROOT/}"
+    fi
+    if LC_ALL=C grep -q $'\r' "$script" 2>/dev/null; then
+      fail "script has Windows CRLF line endings: ${script#$ROOT/}"
+    fi
+  done
+}
+
 check_python_deps() {
   if [[ ! -x "$VENV_PY" ]]; then
     fail "backend/anayaa Python environment missing; run ./scripts/anayaa setup"
@@ -396,6 +446,8 @@ cmd_doctor() {
   DOCTOR_FAILED=false
   load_env_if_present
   log "Checking Anayaa local runtime..."
+  check_wsl_hygiene
+  check_script_hygiene
   check_command "Python 3" "python3"
   check_command "Node.js" "node"
   check_command "npm" "npm"
@@ -412,6 +464,13 @@ cmd_doctor() {
     exit 1
   fi
   log "Doctor passed. Start Anayaa with: ./scripts/anayaa serve"
+}
+
+cmd_release_check() {
+  cmd_doctor
+  log "Running release candidate checks..."
+  "$ROOT/scripts/pre-merge-checks.sh"
+  log "Release check passed."
 }
 
 pids_on_port() {
@@ -470,6 +529,7 @@ case "$command" in
   setup) cmd_setup "$@" ;;
   serve) cmd_serve "$@" ;;
   doctor) cmd_doctor "$@" ;;
+  release-check) cmd_release_check "$@" ;;
   stop) cmd_stop "$@" ;;
   clean) cmd_clean "$@" ;;
   help|--help|-h) usage ;;

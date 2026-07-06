@@ -4,10 +4,10 @@ Anayaa is distributed as a local-first app. The app runs on your machine, and yo
 
 ## Quick Start
 
+Public release install:
+
 ```bash
-git clone <anayaa-repo-url>
-cd Anayaa.AI
-./scripts/install-anayaa.sh
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
@@ -17,6 +17,18 @@ Open:
 ```text
 http://127.0.0.1:8000
 ```
+
+Developer checkout install:
+
+```bash
+git clone <anayaa-repo-url>
+cd Anayaa.AI
+./scripts/install-anayaa.sh
+anayaa setup
+anayaa serve
+```
+
+The release installer downloads Anayaa into `~/.anayaa/Anayaa.AI` and links the `anayaa` command into `~/.local/bin` by default. If your shell cannot find `anayaa` after install, add `~/.local/bin` to `PATH` or run the printed command from the installer output.
 
 ## What Setup Does
 
@@ -62,7 +74,7 @@ Install common dependencies with your package manager. On Ubuntu:
 
 ```bash
 sudo apt update
-sudo apt install -y git curl build-essential python3 python3-venv python3-pip nodejs npm postgresql redis-server
+sudo apt install -y curl build-essential python3 python3-venv python3-pip nodejs npm postgresql redis-server
 sudo service postgresql start
 sudo service redis-server start
 ```
@@ -86,7 +98,15 @@ In PowerShell as Administrator:
 wsl --install -d Ubuntu
 ```
 
-Then open Ubuntu and run the Linux steps above inside WSL. Keep the Anayaa repo inside the WSL filesystem, for example under `~/Anayaa.AI`, rather than under `/mnt/c/...`.
+Then open Ubuntu and run the Linux steps above inside WSL. Keep Anayaa inside the WSL filesystem, for example under `~/.anayaa/Anayaa.AI` or `~/Anayaa.AI`, rather than under `/mnt/c/...`. Windows-mounted paths can cause shell permission, line-ending, virtualenv, and Milvus Lite socket problems.
+
+If setup reports PostgreSQL role or database access errors, run:
+
+```bash
+sudo service postgresql start
+sudo -u postgres psql -d postgres -c "ALTER ROLE anayaa WITH LOGIN PASSWORD 'anayaa_dev';"
+anayaa setup
+```
 
 ## Daily Use
 
