@@ -9,6 +9,9 @@ VENV_DIR="$BACKEND/anayaa"
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
 CLI_CMD="${ANAYAA_CLI_COMMAND:-./scripts/anayaa}"
 
+PKG_RESOURCES_WARNING_FILTER="ignore:pkg_resources is deprecated as an API:UserWarning"
+export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}${PKG_RESOURCES_WARNING_FILTER}"
+
 log() { echo "[anayaa-online-setup] $*"; }
 warn() { echo "[anayaa-online-setup] WARNING: $*" >&2; }
 
