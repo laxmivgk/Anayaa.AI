@@ -32,7 +32,7 @@ Anayaa uses agents because each step needs a different kind of intelligence:
 
 Agents uniquely help because moral guidance needs controlled collaboration between reasoning, retrieval, human review, synthesis, and auditing. A single LLM call cannot reliably do all of that with the same safety and traceability.
 
-The project is built for local use with limited resources.
+The project is built for local use.
 
 CodeCarbon Real-Time Audit (Resource-Aware Computing)
 Anayaa promotes eco-conscious measurement rather than a zero-impact claim:
