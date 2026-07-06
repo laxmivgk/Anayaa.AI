@@ -46,17 +46,6 @@ Power Draft Monitoring: Shows active CPU/GPU power estimates to make local compu
 - Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, server-side password reset tokens delivered by SMTP email or local terminal fallback
 - Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
 
-
-
-<img width="1899" height="987" alt="image" src="https://github.com/user-attachments/assets/99f1f747-54ac-4813-8e7e-b1cd63812151" />
-<img width="1124" height="1029" alt="image" src="https://github.com/user-attachments/assets/ad338070-759d-4af5-a44f-b3c32165b0eb" />
-<img width="1127" height="1034" alt="image" src="https://github.com/user-attachments/assets/1581e3fd-b63e-4b6b-8e91-ab2e2cae4c74" />
-<img width="829" height="1031" alt="image" src="https://github.com/user-attachments/assets/8f809b28-650b-4cc3-98ac-2d94ab7e11e2" />
-
-
-
-
-
 ## Current Experience
 
 The frontend has three main tabs.
@@ -120,36 +109,7 @@ FastAPI backend
     |-- LLM judge and deterministic grounding contract
     |-- PostgreSQL persistence
     |-- Redis semantic cache and session state
-```
-```mermaid
-flowchart TD
-    A["React + Vite Frontend"] --> B["FastAPI Backend API"]
 
-    B --> C["Auth: PostgreSQL Users + JWT Sessions"]
-    B --> D["Security Layer: Sanitizer + Regex Firewall + PII Scrubber + Local NER"]
-    D --> E["Query Rewriter + Optimizer"]
-    E --> F["Planner Agent"]
-
-    F --> G["Bounded ReAct Reasoner"]
-    G --> H["MCP Retrieval Client"]
-    H --> I["MCP Stdio Retrieval Server"]
-
-    I --> J["Milvus Lite Vector Store"]
-    I --> K["Scripture Corpus JSON"]
-    I --> L["Graph Expansion + Reranking"]
-
-    L --> M{"Interactive Guidance?"}
-    M -->|Yes| N["Human Review: Concepts + Scripture Selection"]
-    M -->|No| O["Synthesizer Agent"]
-
-    N --> O
-    O --> P["G-Eval Judge + Deterministic Grounding Checks"]
-    P --> Q["Finalizer"]
-    Q --> R["User-Facing Guidance UI"]
-
-    B --> S["Redis Cache + Rate Limits"]
-    B --> T["Eco Metrics + Audit Logs"]
-```
 Runtime retrieval goes through the MCP tool boundary. The FastAPI request path does not open `MilvusStore` directly for retrieval. The MCP client allowlists only:
 
 - `milvus_hybrid_search`
