@@ -42,6 +42,8 @@ def _get_store() -> MilvusStore:
         settings = get_settings()
         load_scriptures_json()
         corpus = get_corpus()
+        # Fail fast if setup did not seed the collection. Retrieval quality is a
+        # release requirement, so an empty store should never become a fallback.
         _store = MilvusStore(settings.milvus_uri)
         if not settings.milvus_enabled:
             raise RuntimeError("Milvus is disabled (MILVUS_ENABLED=false). Enable Milvus for retrieval.")
@@ -75,6 +77,8 @@ def milvus_hybrid_search(
 @mcp.tool()
 def graph_expand(keywords: list[str], limit: int = 10) -> dict:
     """Expand retrieval candidates via the scripture knowledge graph."""
+    # Graph expansion complements vector search for moral themes such as duty,
+    # restraint, compassion, and truth that may not share surface wording.
     results = expand_graph(get_corpus(), keywords, limit)
     return {"results": results, "count": len(results)}
 

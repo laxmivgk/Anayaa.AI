@@ -12,9 +12,10 @@ fi
 BIN_DIR="${ANAYAA_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/anayaa"
 INSTALL_DIR="${ANAYAA_INSTALL_DIR:-$HOME/.anayaa/Anayaa.AI}"
-DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.0-local-beta.tar.gz"
+DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.1-local-beta.tar.gz"
 RELEASE_URL="${ANAYAA_RELEASE_URL:-$DEFAULT_RELEASE_URL}"
 REPLACE_INSTALL=false
+INSTALL_SYSTEM_DEPS="${ANAYAA_INSTALL_SYSTEM_DEPS:-true}"
 
 log() { echo "[anayaa-install] $*"; }
 warn() { echo "[anayaa-install] WARNING: $*" >&2; }
@@ -34,6 +35,7 @@ Options:
   --install-dir DIR Install downloaded release files in DIR instead of ~/.anayaa/Anayaa.AI
   --release-url URL Download this release archive when not running from a checkout
   --replace         Replace an existing downloaded install directory
+  --no-system-deps  Do not install/start system dependencies; only check them
   --check-only      Check prerequisites and print next steps without creating the command link
   --help            Show this help
 
@@ -65,6 +67,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --replace)
       REPLACE_INSTALL=true
+      shift
+      ;;
+    --no-system-deps)
+      INSTALL_SYSTEM_DEPS=false
       shift
       ;;
     --check-only)
@@ -107,24 +113,14 @@ check_command() {
   return 1
 }
 
-check_optional_command() {
-  local name="$1"
-  if command -v "$name" >/dev/null 2>&1; then
-    log "OK: found $name"
-    return 0
-  fi
-  warn "Missing optional runtime dependency: $name"
-  return 1
-}
-
 print_dependency_help() {
   cat <<'EOF'
 
 Install missing dependencies, then rerun this installer.
 
 macOS:
-  brew install python node postgresql@16 redis ollama
-  brew services start postgresql@16
+  brew install python node postgresql redis ollama
+  brew services start postgresql
   brew services start redis
   ollama serve
 
@@ -133,11 +129,190 @@ Ubuntu / WSL2:
   sudo apt install -y curl build-essential python3 python3-venv python3-pip nodejs npm postgresql redis-server
   sudo service postgresql start
   sudo service redis-server start
+  curl -fsSL https://ollama.com/install.sh | sh
   ollama serve
 
 Ollama install docs:
   https://ollama.com
 EOF
+}
+
+run_privileged() {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    "$@"
+    return $?
+  fi
+
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return $?
+  fi
+
+  "$@"
+}
+
+postgres_reachable() {
+  command -v pg_isready >/dev/null 2>&1 && pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1
+}
+
+redis_reachable() {
+  command -v redis-cli >/dev/null 2>&1 && redis-cli -u redis://127.0.0.1:6379/0 ping >/dev/null 2>&1
+}
+
+ollama_reachable() {
+  command -v curl >/dev/null 2>&1 && curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1
+}
+
+wait_for_service() {
+  local check_name="$1"
+  for _ in $(seq 1 20); do
+    "$check_name" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+brew_formula_installed() {
+  local formula="$1"
+  command -v brew >/dev/null 2>&1 && brew list --versions "$formula" >/dev/null 2>&1
+}
+
+start_homebrew_postgres() {
+  local formulas=(postgresql@18 postgresql@17 postgresql@16 postgresql@15 postgresql@14 postgresql)
+  local formula
+  for formula in "${formulas[@]}"; do
+    if brew_formula_installed "$formula"; then
+      log "Starting PostgreSQL with Homebrew service: $formula"
+      brew services start "$formula" >/dev/null 2>&1 || true
+      wait_for_service postgres_reachable && return 0
+    fi
+  done
+  return 1
+}
+
+start_homebrew_redis() {
+  if brew_formula_installed redis; then
+    log "Starting Redis with Homebrew service: redis"
+    brew services start redis >/dev/null 2>&1 || true
+    wait_for_service redis_reachable && return 0
+  fi
+  return 1
+}
+
+start_ollama_if_possible() {
+  if ollama_reachable; then
+    log "OK: Ollama API reachable at http://127.0.0.1:11434"
+    return 0
+  fi
+
+  if command -v ollama >/dev/null 2>&1; then
+    log "Starting Ollama in the background..."
+    nohup ollama serve >> "$HOME/.anayaa/ollama-serve.log" 2>&1 &
+    wait_for_service ollama_reachable && return 0
+  fi
+
+  return 1
+}
+
+install_macos_system_deps() {
+  if ! command -v brew >/dev/null 2>&1; then
+    fail "Homebrew is required for one-command macOS setup. Install it from https://brew.sh, then rerun this installer."
+  fi
+
+  local formulas=()
+  command -v python3 >/dev/null 2>&1 || formulas+=(python)
+  if ! command -v node >/dev/null 2>&1 || ! command -v npm >/dev/null 2>&1; then
+    formulas+=(node)
+  fi
+  command -v pg_isready >/dev/null 2>&1 || formulas+=(postgresql)
+  command -v redis-cli >/dev/null 2>&1 || formulas+=(redis)
+  command -v ollama >/dev/null 2>&1 || formulas+=(ollama)
+
+  if [[ "${#formulas[@]}" -gt 0 ]]; then
+    log "Installing missing macOS dependencies with Homebrew: ${formulas[*]}"
+    brew install "${formulas[@]}"
+  fi
+
+  if ! postgres_reachable; then
+    start_homebrew_postgres || warn "PostgreSQL is installed but not reachable yet. `anayaa setup` will retry and print recovery steps if needed."
+  else
+    log "OK: PostgreSQL reachable at 127.0.0.1:5432"
+  fi
+
+  if ! redis_reachable; then
+    start_homebrew_redis || warn "Redis is installed but not reachable yet. `anayaa setup` will retry and print recovery steps if needed."
+  else
+    log "OK: Redis reachable at redis://127.0.0.1:6379/0"
+  fi
+
+  start_ollama_if_possible || warn "Ollama CLI is installed but the API is not reachable yet. Run `ollama serve` if `anayaa setup` cannot reach it."
+}
+
+install_linux_system_deps() {
+  local needs_apt=false
+  for command_name in curl python3 node npm pg_isready redis-cli; do
+    command -v "$command_name" >/dev/null 2>&1 || needs_apt=true
+  done
+
+  # Keep the beta install close to an Ollama-style one-command setup while
+  # still using the platform package manager for standard Linux services.
+  if [[ "$needs_apt" == true ]] && command -v apt-get >/dev/null 2>&1; then
+    log "Installing missing Linux dependencies with apt."
+    run_privileged apt-get update
+    run_privileged apt-get install -y curl build-essential python3 python3-venv python3-pip nodejs npm postgresql redis-server
+  elif [[ "$needs_apt" == true ]]; then
+    warn "Automatic Linux dependency installation currently supports apt-based systems. Install Python, Node.js, PostgreSQL, Redis, and Ollama manually, then rerun."
+  fi
+
+  if command -v service >/dev/null 2>&1; then
+    run_privileged service postgresql start >/dev/null 2>&1 || true
+    run_privileged service redis-server start >/dev/null 2>&1 || true
+  elif command -v systemctl >/dev/null 2>&1; then
+    run_privileged systemctl start postgresql >/dev/null 2>&1 || true
+    run_privileged systemctl start redis-server >/dev/null 2>&1 || true
+  fi
+
+  # Ollama is not an Ubuntu apt package; use the official installer so Linux
+  # and WSL users get the same runtime dependency the macOS Homebrew path gives.
+  ensure_linux_ollama
+  start_ollama_if_possible || warn "Ollama CLI is installed but the API is not reachable yet. Run `ollama serve` if `anayaa setup` cannot reach it."
+}
+
+ensure_linux_ollama() {
+  if command -v ollama >/dev/null 2>&1; then
+    return 0
+  fi
+
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "Ollama is not installed and curl is unavailable. Install Ollama from https://ollama.com/download, then rerun this installer."
+    return 1
+  fi
+
+  if [[ "$(id -u)" -ne 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+    warn "Ollama is not installed and sudo is unavailable. Install Ollama from https://ollama.com/download, then rerun this installer."
+    return 1
+  fi
+
+  log "Installing Ollama from official installer: https://ollama.com/install.sh"
+  if curl -fsSL https://ollama.com/install.sh | sh; then
+    return 0
+  fi
+
+  warn "Ollama automatic install failed. Install from https://ollama.com/download, then rerun this installer."
+  return 1
+}
+
+ensure_system_deps() {
+  if [[ "$INSTALL_SYSTEM_DEPS" != "true" ]]; then
+    log "Skipping automatic system dependency installation because --no-system-deps was provided."
+    return 0
+  fi
+
+  case "$(detect_os)" in
+    macOS) install_macos_system_deps ;;
+    Linux|WSL/Linux) install_linux_system_deps ;;
+    *) warn "Unsupported platform for automatic system dependency installation. Install prerequisites manually." ;;
+  esac
 }
 
 resolve_root() {
@@ -219,19 +394,12 @@ main() {
   log "Installing Anayaa local CLI from: $ROOT"
   log "Detected platform: $(detect_os)"
   check_wsl_install_path
+  ensure_system_deps
 
   local missing=false
-  for command_name in curl python3 node npm; do
+  for command_name in curl python3 node npm pg_isready redis-cli ollama; do
     check_command "$command_name" || missing=true
   done
-
-  check_optional_command git || true
-  check_optional_command pg_isready || true
-  check_optional_command redis-cli || true
-
-  if ! check_command ollama; then
-    missing=true
-  fi
 
   if [[ "$missing" == true ]]; then
     print_dependency_help

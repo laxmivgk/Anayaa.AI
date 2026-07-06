@@ -115,6 +115,8 @@ def build_insufficient_context_response(
     top_score: float,
     threshold: float,
 ) -> dict[str, Any]:
+    # The UI should show that the corpus match was weak, not that the system is
+    # broken. This keeps user recovery focused on rephrasing the dilemma.
     return {
         "status": "insufficient_context",
         "userMessage": (
@@ -160,6 +162,8 @@ def build_retrieval_unavailable_response(
     power_metrics: dict[str, Any],
     detail: str,
 ) -> dict[str, Any]:
+    # Operational retrieval failures are setup/runtime problems, so they get a
+    # different status than low-confidence scripture matches.
     return {
         "status": "retrieval_unavailable",
         "userMessage": (
@@ -241,6 +245,8 @@ def build_synthesizer_unavailable_response(
     status: str = "synthesizer_unavailable",
     failure_reason: str = "synthesizer_service_unavailable",
 ) -> dict[str, Any]:
+    # If Ollama or the output contract fails, no template guidance is substituted.
+    # The user sees a recoverable status instead of unsupported advice.
     return {
         "status": status,
         "userMessage": user_message or (

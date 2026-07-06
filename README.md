@@ -46,6 +46,30 @@ Power Draft Monitoring: Shows active CPU/GPU power estimates to make local compu
 - Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, server-side password reset tokens delivered by SMTP email or local terminal fallback
 - Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
 
+## Agent and Tool Design
+
+Anayaa uses agents where they add meaningful separation of responsibility rather than wrapping every function in an agent. The planner agent extracts moral concepts and retrieval strategy, the bounded ReAct retry agent decides when weak retrieval needs another attempt, the MCP retriever tool agent keeps scripture access behind an allowlisted tool boundary, the synthesizer agent writes only from selected evidence, and the audit agent checks faithfulness, relevance, harmlessness, privacy, and grounding before guidance is shown.
+
+The design deliberately combines existing toolsets instead of rebuilding them:
+
+- **Ollama** runs local open-weight models for planning, judging, and synthesis.
+- **MCP** isolates retrieval as an explicit tool boundary with an allowlist.
+- **Milvus Lite** provides local vector search over scripture embeddings.
+- **PostgreSQL** stores users, reset-token hashes, traces, feedback, and audit data.
+- **Redis** handles sessions, rate limits, and semantic cache entries.
+- **ONNX Runtime** serves cached local embeddings during offline-first runtime.
+- **FastAPI and React** provide a reproducible local application surface.
+
+When a required tool is unavailable, Anayaa returns explicit statuses such as `planner_unavailable`, `retrieval_unavailable`, `synthesizer_unavailable`, or `quality_threshold_not_met` rather than silently substituting unsupported guidance.
+
+Code comments are intentionally placed at behavior boundaries that matter for review and maintenance: local installation and service bootstrap, setup versus serve responsibilities, PostgreSQL repair behavior, ADK runtime state, MCP retrieval isolation, no-fallback synthesis, explicit user-facing failure states, password-reset delivery safety, and bounded frontend follow-up context. The comments explain design and behavior rather than restating obvious syntax.
+
+## Security and Secret Handling
+
+Do not commit API keys, SMTP passwords, JWT secrets, database credentials for real environments, or private model/provider tokens. Local development defaults such as `POSTGRES_PASSWORD=anayaa_dev` are placeholders for single-machine beta use only. Runtime secrets belong in `backend/.env`, deployment environment variables, or a secret manager; `backend/.env` is ignored by git.
+
+Cloud routing is disabled unless a user explicitly configures a cloud key such as `GEMINI_API_KEY`. Password reset delivery is terminal-only in local mode when SMTP is absent, and `APP_ENV=production` refuses terminal-only password reset delivery.
+
 ## Current Experience
 
 The frontend has three main tabs.
@@ -82,6 +106,28 @@ The visible answer is organized around:
 - Eco and audit metadata
 
 ## Architecture
+
+```mermaid
+flowchart TD
+    U["User Browser<br/>127.0.0.1:8000"] --> FE["React Frontend<br/>frontend/dist"]
+    FE --> API["FastAPI Backend<br/>Local Anayaa Server"]
+    API --> AUTH["Auth<br/>Login, JWT, Password Reset"]
+    AUTH --> PG["PostgreSQL<br/>Users, reset tokens, traces, feedback"]
+    API --> REDIS["Redis<br/>Sessions, rate limits, semantic cache"]
+    API --> SAFE["Safety Layer<br/>Sanitizer, firewall, PII scrubber"]
+    SAFE --> WF["ADK Agent Workflow"]
+    WF --> PLAN["Planner + ReAct Retry<br/>Ollama local models"]
+    PLAN --> MCP["MCP Retrieval Client"]
+    MCP --> RET["MCP Milvus Retrieval Server"]
+    RET --> MILVUS["Milvus Lite<br/>scripture_verses"]
+    RET --> CORPUS["Local Scripture Corpus<br/>backend/data/scriptures.json"]
+    RET --> RERANK["Graph expand + rerank"]
+    RERANK --> WF
+    WF --> SYNTH["Synthesizer<br/>Ollama local model"]
+    SYNTH --> AUDIT["G-Eval + Grounding Contract"]
+    AUDIT --> OUT["Final Guidance<br/>Summary, Reflection, Judgement, Next step, Citations"]
+    OUT --> FE
+```
 
 ```text
 React + Vite frontend
@@ -197,12 +243,12 @@ For an Ollama-style public beta, Anayaa is meant to be installed and run on the 
 First-time users start with:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.1-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
 
-The installer downloads Anayaa into `~/.anayaa/Anayaa.AI` and links the `anayaa` command into `~/.local/bin`. If your shell cannot find `anayaa` after install, open a new terminal or run:
+The installer downloads Anayaa into `~/.anayaa/Anayaa.AI`, links the `anayaa` command into `~/.local/bin`, and attempts to install/start required local system services where the platform has a supported package manager. On macOS it uses Homebrew for Python, Node.js, PostgreSQL, Redis, and Ollama. On apt-based Linux/WSL it installs Python, Node.js, PostgreSQL, Redis, and Ollama; Ollama is installed from the official `https://ollama.com/install.sh` script when missing. If your shell cannot find `anayaa` after install, open a new terminal or run:
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
@@ -218,7 +264,15 @@ Expected timing:
 | Slower WSL or older machines | 60-90 minutes |
 | Daily `anayaa serve` after setup | 1-2 minutes |
 
-`anayaa setup` is the required bootstrap step for first-time users. `anayaa serve` is the daily local runtime command after setup has built the frontend, installed dependencies, pulled Ollama models, cached embeddings, and seeded retrieval.
+`anayaa setup` is the required app bootstrap step for first-time users. `anayaa serve` is the daily local runtime command after setup has built the frontend, installed dependencies, pulled Ollama models, cached embeddings, and seeded retrieval.
+
+This beta does not require a hosted public endpoint for judging. To reproduce the deployment locally, run the install command above, keep Wi-Fi available during `anayaa setup`, then open `http://127.0.0.1:8000` after `anayaa serve` starts.
+
+Local URLs after `anayaa serve`:
+
+- App: `http://127.0.0.1:8000`
+- Health: `http://127.0.0.1:8000/api/health`
+- Deep health: `http://127.0.0.1:8000/api/health/deep`
 
 Read:
 
@@ -226,16 +280,18 @@ Read:
 - [PRIVACY.md](./PRIVACY.md) for local-first data behavior.
 - [DISCLAIMER.md](./DISCLAIMER.md) before using Anayaa for sensitive real-world dilemmas.
 
-## Prerequisites
+## Local Runtime Requirements
+
+The public installer prepares or checks the local runtime pieces below. Manual installation is usually needed only when a platform package manager is unavailable, permissions are restricted, or a service fails to start.
 
 - Python 3.10+
 - Node.js 18+
-- PostgreSQL running locally
-- Redis running locally
-- Ollama installed locally
+- PostgreSQL on `127.0.0.1:5432`
+- Redis on `redis://127.0.0.1:6379/0`
+- Ollama on `http://127.0.0.1:11434`
 - Enough disk space for local Python packages, embedding assets, Milvus Lite data, and Ollama models
 
-Windows is supported through WSL2 Ubuntu. Run the same Anayaa commands from the WSL shell; the setup wrapper can start local services through Homebrew on macOS or `service`/`systemctl` on WSL/Linux.
+On macOS, automatic system setup uses Homebrew. On apt-based Linux/WSL, it uses `apt`, local service commands, and the official Ollama installer when Ollama is missing. Windows is supported through WSL2 Ubuntu; run Anayaa from the WSL shell.
 
 ### Verify installation
 
@@ -249,27 +305,11 @@ redis-cli ping
 ollama --version
 ```
 
-The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127.0.0.1:6379/0`, and Ollama at `http://127.0.0.1:11434` unless overridden in `backend/.env`.
+These endpoints can be overridden in `backend/.env` for development, but the beta defaults assume local loopback services.
 
-## Local Setup
+## Setup and Runtime Details
 
-Anayaa is local-first. The normal product-style path is install, setup, then serve.
-
-```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
-anayaa setup
-anayaa serve
-```
-
-From a cloned checkout, use `./scripts/install-anayaa.sh` instead of the release `curl` command.
-
-Open:
-
-- App: `http://127.0.0.1:8000`
-- Health: `http://127.0.0.1:8000/api/health`
-- Deep health: `http://127.0.0.1:8000/api/health/deep`
-
-`anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the local corpus changed. This is also the command to run again after `anayaa clean --all --yes`, because `--all` removes storage and dependency folders. First-time users should expect setup to take 20-60 minutes, mostly because of dependency installs, model pulls, embedding export, and retrieval seeding.
+`anayaa setup` is the one-time online app setup. Keep internet access on for this step because it prepares the Anayaa PostgreSQL role/database, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the local corpus changed. This is also the command to run again after `anayaa clean --all --yes`, because `--all` removes storage and dependency folders. First-time users should expect setup to take 20-60 minutes, mostly because of dependency installs, model pulls, embedding export, and retrieval seeding.
 
 `anayaa serve` starts the local runtime. It works for normal offline/local use after setup because `OFFLINE_MODE=true` uses cached dependencies, built frontend assets, local Ollama models, ONNX embeddings, and local Milvus Lite data. If `serve` reports missing frontend assets, models, embeddings, or Milvus data, run `anayaa setup` once before serving again. If you intentionally want serve to repair missing online assets, run:
 

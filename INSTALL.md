@@ -7,7 +7,7 @@ Anayaa is distributed as a local-first app. The app runs on your machine, and yo
 Public release install:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.1-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
@@ -28,11 +28,11 @@ anayaa setup
 anayaa serve
 ```
 
-The release installer downloads Anayaa into `~/.anayaa/Anayaa.AI` and links the `anayaa` command into `~/.local/bin` by default. If your shell cannot find `anayaa` after install, add `~/.local/bin` to `PATH` or run the printed command from the installer output.
+The release installer downloads Anayaa into `~/.anayaa/Anayaa.AI`, links the `anayaa` command into `~/.local/bin`, and attempts to install/start required local system services where the platform has a supported package manager. On macOS it uses Homebrew for Python, Node.js, PostgreSQL, Redis, and Ollama. On apt-based Linux/WSL it installs Python, Node.js, PostgreSQL, Redis, and Ollama; Ollama is installed from the official `https://ollama.com/install.sh` script when missing. If your shell cannot find `anayaa` after install, add `~/.local/bin` to `PATH` or run the printed command from the installer output.
 
 ## What Setup Does
 
-`anayaa setup` is the one-time online setup. Keep Wi-Fi on for this step. It prepares PostgreSQL, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports local ONNX embeddings, and seeds scripture retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the corpus changed.
+`anayaa setup` is the one-time online app setup. Keep Wi-Fi on for this step. It prepares the Anayaa PostgreSQL role/database, installs backend and frontend dependencies, builds the frontend, pulls required Ollama models, caches embedding assets, exports local ONNX embeddings, and seeds scripture retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the corpus changed.
 
 After setup, normal runtime is local/offline-first:
 
@@ -51,39 +51,38 @@ anayaa serve
 
 ## macOS
 
-Install common dependencies with Homebrew:
+The public release installer attempts these Homebrew steps for you. If you need to repair prerequisites manually, run:
 
 ```bash
-brew install python node postgresql@16 redis ollama
-brew services start postgresql@16
+brew install python node postgresql redis ollama
+brew services start postgresql
 brew services start redis
 ollama serve
 ```
 
-Then run:
+Then rerun:
 
 ```bash
-./scripts/install-anayaa.sh
 anayaa setup
 anayaa serve
 ```
 
 ## Linux
 
-Install common dependencies with your package manager. On Ubuntu:
+The public release installer attempts the apt steps below on Ubuntu/WSL. If you need to repair prerequisites manually, run:
 
 ```bash
 sudo apt update
 sudo apt install -y curl build-essential python3 python3-venv python3-pip nodejs npm postgresql redis-server
 sudo service postgresql start
 sudo service redis-server start
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-Install Ollama from the official Ollama installer, then run:
+Then run:
 
 ```bash
 ollama serve
-./scripts/install-anayaa.sh
 anayaa setup
 anayaa serve
 ```

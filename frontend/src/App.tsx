@@ -566,6 +566,8 @@ function loadConversationHistory(historyKey: string): QuestionHistoryItem[] {
 
 function saveConversationHistory(historyKey: string, items: QuestionHistoryItem[]): void {
   if (!historyKey) return;
+  // Store only a small, scrubbed local history window. Follow-up mode sends a
+  // bounded context payload to the backend, not hidden long-term memory.
   const scrubbedItems = items.slice(0, STORED_CONVERSATION_HISTORY).map(scrubStoredHistoryItem);
   localStorage.setItem(conversationHistoryKey(historyKey), JSON.stringify(scrubbedItems));
 }
@@ -603,6 +605,8 @@ function restoreConversationHistoryForLogin(email: string, newKey: string): Ques
 }
 
 function buildPreviousContextPayload(items: QuestionHistoryItem[]): PreviousContextPayload[] {
+  // Previous context is intentionally question-only and capped before it reaches
+  // the agent workflow, which limits privacy exposure and prompt drift.
   return items
     .map(scrubStoredHistoryItem)
     .filter((item) => item.question.trim().length > 0)
@@ -1036,6 +1040,8 @@ export default function App() {
         body: JSON.stringify({
           query: apiQuery,
           preSynthesisVerification,
+          // Follow-up mode gives Anayaa recent local context; new dilemmas stay
+          // standalone so old guidance does not silently influence the answer.
           previousContext: dilemmaStartMode === "follow-up" ? buildPreviousContextPayload(questionHistory) : [],
         }),
       });
