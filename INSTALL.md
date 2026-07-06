@@ -7,7 +7,7 @@ Anayaa is distributed as a local-first app. The app runs on your machine, and yo
 Public release install:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.1-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.2-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
