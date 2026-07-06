@@ -7,7 +7,7 @@ Anayaa is distributed as a local-first app. The app runs on your machine, and yo
 Public release install:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.3-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.4-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
@@ -28,7 +28,7 @@ anayaa setup
 anayaa serve
 ```
 
-The release installer downloads Anayaa into `~/.anayaa/Anayaa.AI`, links the `anayaa` command into `~/.local/bin`, and attempts to install/start required local system services where the platform has a supported package manager. On macOS it uses Homebrew for Python, Node.js, PostgreSQL, Redis, and Ollama. On apt-based Linux/WSL it installs Python, Node.js, PostgreSQL, Redis, and Ollama; Ollama is installed from the official `https://ollama.com/install.sh` script when missing. If your shell cannot find `anayaa` after install, add `~/.local/bin` to `PATH` or run the printed command from the installer output.
+The release installer downloads Anayaa into `~/.anayaa/Anayaa.AI`, links the `anayaa` command into `~/.local/bin`, and attempts to install/start required local system services where the platform has a supported package manager. Rerunning the release installer refreshes Anayaa code while preserving local runtime state such as `backend/.env`, `backend/data`, the Python virtual environment, and frontend dependencies. On macOS it uses Homebrew for Python, Node.js, PostgreSQL, Redis, and Ollama. On apt-based Linux/WSL it installs Python, Node.js, PostgreSQL, Redis, and Ollama; Ollama is installed from the official `https://ollama.com/install.sh` script when missing. If your shell cannot find `anayaa` after install, add `~/.local/bin` to `PATH` or run the printed command from the installer output.
 
 ## What Setup Does
 

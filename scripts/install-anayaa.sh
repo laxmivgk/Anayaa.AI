@@ -12,7 +12,7 @@ fi
 BIN_DIR="${ANAYAA_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/anayaa"
 INSTALL_DIR="${ANAYAA_INSTALL_DIR:-$HOME/.anayaa/Anayaa.AI}"
-DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.3-local-beta.tar.gz"
+DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.4-local-beta.tar.gz"
 RELEASE_URL="${ANAYAA_RELEASE_URL:-$DEFAULT_RELEASE_URL}"
 REPLACE_INSTALL=false
 INSTALL_SYSTEM_DEPS="${ANAYAA_INSTALL_SYSTEM_DEPS:-true}"
@@ -28,13 +28,14 @@ Usage:
   curl -sSL <release-install-url> | bash
 
 Installs the `anayaa` command. From a checkout, this links to scripts/anayaa.
-When run through curl, it downloads a release archive and installs it under ~/.anayaa/Anayaa.AI.
+When run through curl, it downloads a release archive into ~/.anayaa/Anayaa.AI.
+Rerunning a release install updates Anayaa code while preserving local runtime state.
 
 Options:
   --bin-dir DIR     Install the command link in DIR instead of ~/.local/bin
   --install-dir DIR Install downloaded release files in DIR instead of ~/.anayaa/Anayaa.AI
   --release-url URL Download this release archive when not running from a checkout
-  --replace         Replace an existing downloaded install directory
+  --replace         Replace an existing downloaded install directory without preserving local runtime state
   --no-system-deps  Do not install/start system dependencies; only check them
   --check-only      Check prerequisites and print next steps without creating the command link
   --help            Show this help
@@ -321,6 +322,11 @@ resolve_root() {
   fi
 
   if [[ -d "$INSTALL_DIR" && -x "$INSTALL_DIR/scripts/anayaa" ]]; then
+    if [[ -n "$RELEASE_URL" ]]; then
+      log "Updating existing Anayaa install at: $INSTALL_DIR"
+      download_release
+      return 0
+    fi
     ROOT="$(cd "$INSTALL_DIR" && pwd)"
     log "Using existing Anayaa install at: $ROOT"
     return 0
@@ -330,24 +336,65 @@ resolve_root() {
   download_release
 }
 
+preserve_path_if_present() {
+  local preserve_dir="$1"
+  local relative_path="$2"
+  local source_path="$INSTALL_DIR/$relative_path"
+
+  [[ -e "$source_path" ]] || return 0
+  mkdir -p "$preserve_dir/$(dirname "$relative_path")"
+  cp -a "$source_path" "$preserve_dir/$relative_path"
+}
+
+preserve_install_state() {
+  local preserve_dir="$1"
+  [[ -d "$INSTALL_DIR" ]] || return 0
+
+  preserve_path_if_present "$preserve_dir" "backend/.env"
+  preserve_path_if_present "$preserve_dir" "backend/data"
+  preserve_path_if_present "$preserve_dir" "backend/anayaa"
+  preserve_path_if_present "$preserve_dir" "frontend/node_modules"
+  preserve_path_if_present "$preserve_dir" ".ollama-serve.log"
+}
+
+restore_path_if_present() {
+  local preserve_dir="$1"
+  local relative_path="$2"
+  local preserved_path="$preserve_dir/$relative_path"
+
+  [[ -e "$preserved_path" ]] || return 0
+  mkdir -p "$INSTALL_DIR/$(dirname "$relative_path")"
+  rm -rf "$INSTALL_DIR/$relative_path"
+  cp -a "$preserved_path" "$INSTALL_DIR/$relative_path"
+}
+
+restore_install_state() {
+  local preserve_dir="$1"
+  [[ -d "$preserve_dir" ]] || return 0
+
+  restore_path_if_present "$preserve_dir" "backend/.env"
+  restore_path_if_present "$preserve_dir" "backend/data"
+  restore_path_if_present "$preserve_dir" "backend/anayaa"
+  restore_path_if_present "$preserve_dir" "frontend/node_modules"
+  restore_path_if_present "$preserve_dir" ".ollama-serve.log"
+}
+
 download_release() {
   command -v curl >/dev/null 2>&1 || fail "curl is required to download Anayaa"
   command -v tar >/dev/null 2>&1 || fail "tar is required to extract Anayaa"
 
   if [[ -e "$INSTALL_DIR" ]]; then
-    if [[ "$REPLACE_INSTALL" != true ]]; then
-      fail "Install directory already exists: $INSTALL_DIR. Re-run with --replace to replace it, or set ANAYAA_INSTALL_DIR."
-    fi
     if [[ "$INSTALL_DIR" != "$HOME/.anayaa/Anayaa.AI" && "$INSTALL_DIR" != "$HOME"/.anayaa/* ]]; then
-      fail "--replace is only allowed inside ~/.anayaa for safety: $INSTALL_DIR"
+      fail "Updating or replacing an existing install is only allowed inside ~/.anayaa for safety: $INSTALL_DIR"
     fi
   fi
 
-  local tmp_dir archive extract_dir source_dir
+  local tmp_dir archive extract_dir preserve_dir source_dir
   tmp_dir="$(mktemp -d)"
   ANAYAA_INSTALL_TMP_DIR="$tmp_dir"
   archive="$tmp_dir/anayaa-release.archive"
   extract_dir="$tmp_dir/extract"
+  preserve_dir="$tmp_dir/preserve"
   mkdir -p "$extract_dir"
   trap 'rm -rf "${ANAYAA_INSTALL_TMP_DIR:-}"' EXIT
 
@@ -366,11 +413,18 @@ download_release() {
   source_dir="$(find "$extract_dir" -maxdepth 3 -type f -path '*/scripts/anayaa' -print -quit | sed 's|/scripts/anayaa$||')"
   [[ -n "$source_dir" ]] || fail "Release archive did not contain scripts/anayaa"
 
+  if [[ "$REPLACE_INSTALL" != true ]]; then
+    preserve_install_state "$preserve_dir"
+  fi
+
   mkdir -p "$(dirname "$INSTALL_DIR")"
   if [[ -e "$INSTALL_DIR" ]]; then
     rm -rf "$INSTALL_DIR"
   fi
   mv "$source_dir" "$INSTALL_DIR"
+  if [[ "$REPLACE_INSTALL" != true ]]; then
+    restore_install_state "$preserve_dir"
+  fi
   ROOT="$(cd "$INSTALL_DIR" && pwd)"
   log "Installed Anayaa files at: $ROOT"
 }

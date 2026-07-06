@@ -30,6 +30,9 @@ detect_cli_command() {
 CLI_CMD="${ANAYAA_CLI_COMMAND:-$(detect_cli_command)}"
 export ANAYAA_CLI_COMMAND="$CLI_CMD"
 
+PKG_RESOURCES_WARNING_FILTER="ignore:pkg_resources is deprecated as an API:UserWarning"
+export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}${PKG_RESOURCES_WARNING_FILTER}"
+
 log() { echo "[anayaa] $*"; }
 ok() { echo "[anayaa] OK: $*"; }
 warn() { echo "[anayaa] WARNING: $*" >&2; }
