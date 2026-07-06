@@ -41,7 +41,7 @@ fi
 "${BOOTSTRAP_PSQL[@]}" -v ON_ERROR_STOP=1 <<SQL
 DO \$\$
 BEGIN
-  -- Idempotent local role creation lets `anayaa setup` repair password drift
+  -- Idempotent local role creation lets anayaa setup repair password drift
   -- without requiring users to manually drop databases or roles.
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
     CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';
