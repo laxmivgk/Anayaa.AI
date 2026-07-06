@@ -40,6 +40,8 @@ DO \$\$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${DB_USER}') THEN
     CREATE ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';
+  ELSE
+    ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';
   END IF;
 END
 \$\$;
@@ -47,11 +49,42 @@ END
 SELECT 'CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}'
 WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${DB_NAME}')\\gexec
 
+ALTER DATABASE ${DB_NAME} OWNER TO ${DB_USER};
 GRANT ALL PRIVILEGES ON DATABASE ${DB_NAME} TO ${DB_USER};
 SQL
 
+BOOTSTRAP_DB_PSQL=("${BOOTSTRAP_PSQL[@]}")
+for i in "${!BOOTSTRAP_DB_PSQL[@]}"; do
+  prev=""
+  if [[ "$i" -gt 0 ]]; then
+    prev="${BOOTSTRAP_DB_PSQL[$((i - 1))]}"
+  fi
+  if [[ "${BOOTSTRAP_DB_PSQL[$i]}" == "postgres" && "$prev" == "-d" ]]; then
+    BOOTSTRAP_DB_PSQL[$i]="$DB_NAME"
+  fi
+done
+
+"${BOOTSTRAP_DB_PSQL[@]}" -v ON_ERROR_STOP=1 <<SQL
+ALTER SCHEMA public OWNER TO ${DB_USER};
+GRANT USAGE, CREATE ON SCHEMA public TO ${DB_USER};
+SQL
+
+if ! PGPASSWORD="$DB_PASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then
+  echo "ERROR: Created PostgreSQL role/database, but Anayaa could not log in as ${DB_USER}." >&2
+  echo "Try these recovery commands, then re-run ./scripts/anayaa setup:" >&2
+  echo "  WSL/Linux: sudo -u postgres psql -d postgres -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\"" >&2
+  echo "  macOS:     psql -d postgres -c \"ALTER ROLE ${DB_USER} WITH LOGIN PASSWORD '${DB_PASSWORD}';\"" >&2
+  exit 1
+fi
+
 echo "Applying schema from infra/init.sql ..."
-PGPASSWORD="$DB_PASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$ROOT/infra/init.sql"
+if ! PGPASSWORD="$DB_PASSWORD" psql -h "$PGHOST" -p "$PGPORT" -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 -f "$ROOT/infra/init.sql"; then
+  echo "ERROR: Anayaa could log in to PostgreSQL, but schema setup failed." >&2
+  echo "Check database ownership and schema access, then re-run ./scripts/anayaa setup:" >&2
+  echo "  WSL/Linux: sudo -u postgres psql -d ${DB_NAME} -c \"ALTER SCHEMA public OWNER TO ${DB_USER}; GRANT USAGE, CREATE ON SCHEMA public TO ${DB_USER};\"" >&2
+  echo "  macOS:     psql -d ${DB_NAME} -c \"ALTER SCHEMA public OWNER TO ${DB_USER}; GRANT USAGE, CREATE ON SCHEMA public TO ${DB_USER};\"" >&2
+  exit 1
+fi
 
 echo ""
 echo "PostgreSQL ready."
@@ -59,5 +92,5 @@ echo "  database: ${DB_NAME}"
 echo "  user:     ${DB_USER}"
 echo ""
 echo "Next:"
-echo "  1. Set POSTGRES_ENABLED=true in backend/.env"
-echo "  2. cd backend && python scripts/seed_milvus.py"
+echo "  anayaa setup"
+echo "  anayaa serve"
