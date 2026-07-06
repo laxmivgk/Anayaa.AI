@@ -12,7 +12,7 @@ fi
 BIN_DIR="${ANAYAA_BIN_DIR:-$HOME/.local/bin}"
 TARGET="$BIN_DIR/anayaa"
 INSTALL_DIR="${ANAYAA_INSTALL_DIR:-$HOME/.anayaa/Anayaa.AI}"
-DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.2-local-beta.tar.gz"
+DEFAULT_RELEASE_URL="https://github.com/laxmivgk/Anayaa.AI/archive/refs/tags/v0.1.3-local-beta.tar.gz"
 RELEASE_URL="${ANAYAA_RELEASE_URL:-$DEFAULT_RELEASE_URL}"
 REPLACE_INSTALL=false
 INSTALL_SYSTEM_DEPS="${ANAYAA_INSTALL_SYSTEM_DEPS:-true}"
