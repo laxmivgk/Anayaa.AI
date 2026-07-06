@@ -2,7 +2,7 @@
 # Anayaa.AI - Kaggle Capstone Submission for Agents for Good
 ## License & AI Safety Notice
 
-This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE) per Kaggle Capstone requirements.
+This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE.txt) per Kaggle Capstone requirements.
 
 However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
 
@@ -32,7 +32,7 @@ Anayaa uses agents because each step needs a different kind of intelligence:
 
 Agents uniquely help because moral guidance needs controlled collaboration between reasoning, retrieval, human review, synthesis, and auditing. A single LLM call cannot reliably do all of that with the same safety and traceability.
 
-The project is built for local use with limited resources.
+The project is built for local use.
 
 CodeCarbon Real-Time Audit (Resource-Aware Computing)
 Anayaa promotes eco-conscious measurement rather than a zero-impact claim:
@@ -234,13 +234,31 @@ The UI keeps this user-facing:
 
 For an Ollama-style public beta, Anayaa is meant to be installed and run on the user's own machine. The local browser UI talks to `127.0.0.1`, while PostgreSQL, Redis, Milvus Lite, embeddings, scripture data, and Ollama models stay local by default.
 
-Start with:
+First-time users start with:
 
 ```bash
-./scripts/install-anayaa.sh
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
+
+The installer downloads Anayaa into `~/.anayaa/Anayaa.AI` and links the `anayaa` command into `~/.local/bin`. If your shell cannot find `anayaa` after install, open a new terminal or run:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For developer checkouts, run `./scripts/install-anayaa.sh` from the cloned repo instead of the release `curl` command.
+
+Expected timing:
+
+| Step | Typical time |
+| --- | ---: |
+| First-time `anayaa setup` | 20-60 minutes |
+| Slower WSL or older machines | 60-90 minutes |
+| Daily `anayaa serve` after setup | 1-2 minutes |
+
+`anayaa setup` is the required bootstrap step for first-time users. `anayaa serve` is the daily local runtime command after setup has built the frontend, installed dependencies, pulled Ollama models, cached embeddings, and seeded retrieval.
 
 Read:
 
@@ -259,23 +277,31 @@ Read:
 
 Windows is supported through WSL2 Ubuntu. Run the same Anayaa commands from the WSL shell; the setup wrapper can start local services through Homebrew on macOS or `service`/`systemctl` on WSL/Linux.
 
-# Verify installation
+### Verify installation
+
+If setup fails, these commands help confirm the local prerequisites:
+
+```bash
 python3 --version
 node --version
 pg_isready -h 127.0.0.1 -p 5432
 redis-cli ping
 ollama --version
+```
 
 The startup scripts expect PostgreSQL at `127.0.0.1:5432`, Redis at `redis://127.0.0.1:6379/0`, and Ollama at `http://127.0.0.1:11434` unless overridden in `backend/.env`.
 
 ## Local Setup
 
-Anayaa is local-first. The normal product-style path is one setup command, then one serve command.
+Anayaa is local-first. The normal product-style path is install, setup, then serve.
 
 ```bash
-./scripts/anayaa setup
-./scripts/anayaa serve
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.0-local-beta/scripts/install-anayaa.sh | bash
+anayaa setup
+anayaa serve
 ```
+
+From a cloned checkout, use `./scripts/install-anayaa.sh` instead of the release `curl` command.
 
 Open:
 
@@ -283,23 +309,24 @@ Open:
 - Health: `http://127.0.0.1:8000/api/health`
 - Deep health: `http://127.0.0.1:8000/api/health/deep`
 
-`./scripts/anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the local corpus changed. This is also the command to run again after `./scripts/anayaa clean --all --yes`, because `--all` removes storage and dependency folders.
+`anayaa setup` is the one-time online setup. Keep internet access on for this step because it prepares PostgreSQL, installs Python/npm dependencies, builds the React frontend, pulls local Ollama models, caches and exports ONNX embedding assets, and seeds retrieval. Run it again after updating `backend/data/scriptures.json`; setup checks the stored corpus count and checksum, then rebuilds Milvus embeddings when the local corpus changed. This is also the command to run again after `anayaa clean --all --yes`, because `--all` removes storage and dependency folders. First-time users should expect setup to take 20-60 minutes, mostly because of dependency installs, model pulls, embedding export, and retrieval seeding.
 
-`./scripts/anayaa serve` starts the local runtime. It works for normal offline/local use after setup because `OFFLINE_MODE=true` uses cached dependencies, built frontend assets, local Ollama models, ONNX embeddings, and local Milvus Lite data. If you intentionally want serve to repair missing online assets, run:
+`anayaa serve` starts the local runtime. It works for normal offline/local use after setup because `OFFLINE_MODE=true` uses cached dependencies, built frontend assets, local Ollama models, ONNX embeddings, and local Milvus Lite data. If `serve` reports missing frontend assets, models, embeddings, or Milvus data, run `anayaa setup` once before serving again. If you intentionally want serve to repair missing online assets, run:
 
 ```bash
-./scripts/anayaa serve --online
+anayaa serve --online
 ```
 
 Useful product-style commands:
 
 ```bash
-./scripts/anayaa doctor
-./scripts/anayaa stop
-./scripts/anayaa clean
+anayaa doctor
+anayaa release-check
+anayaa stop
+anayaa clean
 ```
 
-`./scripts/anayaa doctor` checks the local runtime and reports exactly what is missing. `./scripts/anayaa stop` stops Anayaa app processes without deleting cached models, local data, or the built frontend. `./scripts/anayaa clean` delegates to the cleanup script for generated files and optional storage/dependency cleanup.
+`anayaa doctor` checks the local runtime and reports exactly what is missing, including WSL `/mnt/...` installs, CRLF script line endings, and missing executable bits. `anayaa release-check` runs doctor plus compile, backend test, and frontend build checks for a local release candidate. `anayaa stop` stops Anayaa app processes without deleting cached models, local data, or the built frontend. `anayaa clean` delegates to the cleanup script for generated files and optional storage/dependency cleanup.
 
 `scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000. The built frontend is served by FastAPI from `frontend/dist`.
 

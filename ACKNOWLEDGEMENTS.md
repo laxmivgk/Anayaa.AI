@@ -22,7 +22,7 @@ The following machine learning models are used under specialized, custom communi
 ## 2. Text Corpora and Datasets
 *   **Scripture Corpus**
     *   *License:* Public Domain
-    *   *Notice:* The scripture text utilized in this project is sourced entirely from Public Domain translations. It is free of active copyright restrictions and may be used, redistributed, or modified without limitation under the terms of the project's MIT License.
+    *   *Notice:* The scripture text utilized in this project is sourced entirely from Public Domain translations. It is free of active copyright restrictions and may be used, redistributed, or modified without limitation. The repository's original project material is licensed separately under CC BY 4.0 in `LICENSE.txt`.
 ---
 
 ## 3. Hugging Face Models
