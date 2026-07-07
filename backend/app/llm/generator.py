@@ -182,6 +182,16 @@ async def generate_moral_pathway(
     safe_dilemma = normalize_harmful_framing_text(visible_dilemma)
     prompt = _build_synthesis_prompt(safe_dilemma, citations, tone_msg)
     started = time.perf_counter()
+    system_message = (
+        "You are Anayaa, a calm and practical moral guide. "
+        "Give a clear answer for the user's real situation before offering reflection. "
+        "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
+        "Use only the user's dilemma and the retrieved scripture text as evidence. "
+        "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
+        "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
+        "Do not use markdown, bullet points, or numbered lists."
+    )
+    synthesis_options = {"temperature": 0.0, "num_predict": 520, "num_ctx": 2048}
 
     try:
         async with httpx.AsyncClient(base_url=settings.ollama_base_url, timeout=120.0) as client:
@@ -192,22 +202,14 @@ async def generate_moral_pathway(
                     "messages": [
                         {
                             "role": "system",
-                            "content": (
-                                "You are Anayaa, a calm and practical moral guide. "
-                                "Give a clear answer for the user's real situation before offering reflection. "
-                                "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
-                                "Use only the user's dilemma and the retrieved scripture text as evidence. "
-                                "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
-                                "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
-                                "Do not use markdown, bullet points, or numbered lists."
-                            ),
+                            "content": system_message,
                         },
                         {"role": "user", "content": prompt},
                     ],
                     "stream": False,
                     "think": False,
                     "keep_alive": "30m",
-                    "options": {"temperature": 0.0, "num_predict": 320, "num_ctx": 2048},
+                    "options": synthesis_options,
                 },
             )
             response.raise_for_status()
@@ -219,10 +221,56 @@ async def generate_moral_pathway(
             elapsed_ms = int((time.perf_counter() - started) * 1000)
             rejection_reason = _synthesis_rejection_reason(safe_dilemma, citations, pathway)
             if rejection_reason:
+                retry_reason = rejection_reason
+                if _should_retry_synthesis_rejection(rejection_reason):
+                    retry_prompt = (
+                        f"{prompt}\n\n"
+                        "Your previous draft was incomplete or not visibly grounded. Regenerate the full answer now. "
+                        "You must include all 5 labels exactly once, and the final label must be "
+                        "Scripture grounding: with two named retrieved sources and their anchor keywords. "
+                        "Do not attach a quote, chapter, or verse reference from one scripture to a different scripture source."
+                    )
+                    retry_response = await client.post(
+                        "/api/chat",
+                        json={
+                            "model": model,
+                            "messages": [
+                                {"role": "system", "content": system_message},
+                                {"role": "user", "content": retry_prompt},
+                            ],
+                            "stream": False,
+                            "think": False,
+                            "keep_alive": "30m",
+                            "options": synthesis_options,
+                        },
+                    )
+                    retry_response.raise_for_status()
+                    retry_data = retry_response.json()
+                    retry_pathway = _clean_synthesis_output((retry_data.get("message") or {}).get("content", ""))
+                    retry_reason = _synthesis_rejection_reason(safe_dilemma, citations, retry_pathway)
+                    if retry_pathway and not retry_reason:
+                        data = retry_data
+                        pathway = retry_pathway
+                        rejection_reason = ""
+
+                if not rejection_reason:
+                    metrics = {
+                        "engine": "Ollama LLM",
+                        "modelName": model,
+                        "ttftMs": elapsed_ms,
+                        "totalTokens": data.get("eval_count") or len(pathway) // 4,
+                        "tokPerSec": round((data.get("eval_count") or 1) / max(elapsed_ms / 1000, 0.01), 1),
+                        "kvCacheHit": False,
+                        "staticPromptCache": "Inactive",
+                        "memoryUsageMb": None,
+                        "synthesisRetry": True,
+                    }
+                    return pathway, metrics
+
                 # Do not replace a rejected LLM answer with a canned template; a
                 # visible failure is safer than unsupported moral guidance.
-                logger.warning("LLM synthesis rejected (%s); no fallback answer will be shown", rejection_reason)
-                raise SynthesisRejectedError(rejection_reason)
+                logger.warning("LLM synthesis rejected (%s); no fallback answer will be shown", retry_reason)
+                raise SynthesisRejectedError(retry_reason)
 
             metrics = {
                 "engine": "Ollama LLM",
@@ -284,14 +332,36 @@ def _build_synthesis_prompt(
             "If the user may harm themselves or cannot stay safe, tell them to contact local emergency or crisis support now. "
             "Keep business decisions secondary until the user has immediate support and rest.\n"
         )
+    betrayal_revenge_instruction = ""
+    if _is_betrayal_revenge_dilemma(dilemma):
+        betrayal_revenge_instruction = (
+            "For this betrayal, lies, anger, or revenge question, make the Next step calm and proportionate. "
+            "The One-line summary should say not to seek revenge, to protect yourself with truth and boundaries, "
+            "and that forgiveness can be a later process; do not frame protection as the opposite of forgiveness. "
+            "Do not say the user should choose lawful protection rather than trying to forgive. "
+            "Do not use the phrase lawful protection for ordinary lies or betrayal; say truth and calm boundaries instead. "
+            "Tell the user not to retaliate today, to write down what was said, when it happened, who heard it, "
+            "and what evidence exists, and to limit contact if it prevents further harm. "
+            "Do not make law enforcement or authority escalation the default first step. Mention a trusted person or appropriate authority "
+            "only if the lies affect safety, work, school, housing, or reputation; mention emergency support only for threats, stalking, or immediate danger. "
+            "Do not mention legal action unless the user describes a concrete legal threat, safety threat, stalking, workplace/school action, or serious reputation harm.\n"
+        )
     business_integrity_instruction = ""
-    if _is_business_integrity_dilemma(dilemma):
+    if _is_dropshipping_scam_dilemma(dilemma):
         business_integrity_instruction = (
             "For this business-integrity question, answer directly whether the business model is automatically wrong: "
             "say it is not automatically scamming, but it becomes unethical if it hides risk, misleads customers, "
             "uses unreliable fulfillment, conceals delays, refuses fair refunds, or avoids accountability. "
             "Do not assume the user has invested money, suffered losses, or already started the business. "
             "Do not name specific commercial platforms, tools, or companies unless the user named them.\n"
+        )
+    elif _is_business_integrity_dilemma(dilemma):
+        business_integrity_instruction = (
+            "For this business-integrity question, answer the user's exact wealth-versus-integrity conflict directly: "
+            "say that pursuing wealth is not wrong by itself, but pursuing wealth at the cost of honesty, fairness, "
+            "lawful conduct, or integrity is not wise. Do not turn the question into dropshipping, scamming, or a specific "
+            "business model unless the user named one. Keep the practical step focused on identifying the exact corner "
+            "the user feels tempted to cut and choosing an ethical alternative.\n"
         )
     return (
         f"Dilemma:\n{dilemma}\n\n"
@@ -306,11 +376,13 @@ def _build_synthesis_prompt(
         "Judgement: say what choice seems wisest and kindest.\n"
         "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
         "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
+        "In Scripture grounding, never mix sources: if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible, not Bhagavad Gita, Dhammapada, Quran, or another scripture.\n"
         "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
         f"{relationship_instruction}\n"
         "If a private name was redacted, never print [NAME_REDACTED] in final guidance.\n"
         "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
         f"{caregiver_burnout_instruction}"
+        f"{betrayal_revenge_instruction}"
         f"{business_integrity_instruction}"
         "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
         "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
@@ -536,7 +608,9 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     if focus_terms:
         matches = [term for term in focus_terms if _focus_term_in_text(term, pathway_lower)]
         required_matches = 1 if len(focus_terms) <= 2 else 2
-        if len(matches) < required_matches:
+        if len(matches) < required_matches and not (
+            _is_betrayal_revenge_dilemma(dilemma) and _is_betrayal_revenge_pathway_relevant(pathway)
+        ):
             return False
 
     citation_terms: list[str] = []
@@ -550,7 +624,219 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
             if len(term) >= 4 and term not in citation_terms:
                 citation_terms.append(term)
 
-    return not citation_terms or any(term in pathway_lower for term in citation_terms[:8])
+    if not citation_terms or any(term in pathway_lower for term in citation_terms[:8]):
+        return True
+    return _is_betrayal_revenge_dilemma(dilemma) and _betrayal_revenge_citation_grounded(citations, pathway)
+
+
+def _is_betrayal_revenge_pathway_relevant(pathway: str) -> bool:
+    lower = pathway.lower()
+    harm_terms = {
+        "betray",
+        "betrayed",
+        "betrayal",
+        "lie",
+        "lies",
+        "lying",
+        "anger",
+        "angry",
+        "hatred",
+        "hurt",
+        "trust",
+        "trusted",
+    }
+    response_terms = {
+        "revenge",
+        "retaliate",
+        "retaliation",
+        "forgive",
+        "forgiveness",
+        "boundary",
+        "boundaries",
+        "truth",
+        "protect",
+        "protection",
+        "calm",
+        "contact",
+    }
+    return any(term in lower for term in harm_terms) and any(term in lower for term in response_terms)
+
+
+def _betrayal_revenge_citation_grounded(citations: list[dict[str, Any]], pathway: str) -> bool:
+    lower = pathway.lower()
+    citation_ids = {str(citation.get("id") or "").lower() for citation in citations}
+    source_terms = {
+        "romans",
+        "bible",
+        "dhammapada",
+        "gita",
+        "bhagavad",
+        "quran",
+        "sutta",
+        "upanishad",
+    }
+    scripture_terms = {
+        "overcome evil",
+        "good",
+        "hatred",
+        "non-hatred",
+        "anger",
+        "delusion",
+        "intellect",
+        "forgiveness",
+        "retaliation",
+        "revenge",
+        "compassion",
+    }
+    source_hits = sum(1 for term in source_terms if term in lower)
+    scripture_hits = sum(1 for term in scripture_terms if term in lower)
+    if {"c3", "b2"}.issubset(citation_ids):
+        return source_hits >= 1 and scripture_hits >= 2
+    return source_hits >= 1 and scripture_hits >= 1
+
+
+def _scripture_source_mismatches(citations: list[dict[str, Any]], pathway: str) -> list[str]:
+    grounding = _scripture_grounding_text(pathway)
+    if not grounding:
+        return []
+
+    indexed = []
+    for index, citation in enumerate(citations):
+        aliases = _source_aliases(citation)
+        if not aliases:
+            continue
+        indexed.append(
+            {
+                "key": str(citation.get("id") or citation.get("source") or index),
+                "source": str(citation.get("source") or citation.get("faith") or f"citation {index + 1}"),
+                "translation": _normalized_text(citation.get("translation") or ""),
+                "aliases": aliases,
+            }
+        )
+
+    mismatches: list[str] = []
+    for sentence in _grounding_sentences(grounding):
+        sentence_lower = _normalized_text(sentence)
+        attributed = _attributed_source_key(sentence_lower, indexed)
+        if not attributed:
+            named = [item for item in indexed if _contains_any_source_alias(sentence_lower, item["aliases"])]
+            attributed = named[0]["key"] if len(named) == 1 else ""
+        if not attributed:
+            continue
+
+        quote_owner = _quote_owner_key(sentence, indexed)
+        if quote_owner and quote_owner != attributed:
+            mismatches.append(f"{attributed}->{quote_owner}")
+            continue
+
+        reference_owner = _parenthetical_reference_owner_key(sentence_lower, indexed)
+        if reference_owner and reference_owner != attributed:
+            mismatches.append(f"{attributed}->{reference_owner}")
+
+    return mismatches[:4]
+
+
+def _scripture_grounding_text(pathway: str) -> str:
+    match = re.search(
+        r"(?:^|[\n.]\s*)scripture grounding\s*:\s*(?P<section>.*?)(?=(?:\n|$)\s*(?:one[- ]line summary|summary|reflection|judg(?:e)?ment|next step)\s*:|\Z)",
+        str(pathway or ""),
+        flags=re.I | re.S,
+    )
+    return match.group("section").strip() if match else ""
+
+
+def _grounding_sentences(text: str) -> list[str]:
+    compact = re.sub(r"\s+", " ", text).strip()
+    if not compact:
+        return []
+    return [part.strip() for part in re.split(r"(?<=[.!?])\s+(?=[A-Z\"“])", compact) if part.strip()]
+
+
+def _source_aliases(citation: dict[str, Any]) -> list[str]:
+    source = _normalized_text(citation.get("source") or "")
+    aliases = [source] if source else []
+    if ":" in source:
+        aliases.extend(part.strip() for part in source.split(":") if part.strip())
+    source_aliases = {
+        "holy bible": ["bible"],
+        "bhagavad gita": ["gita"],
+        "al-quran": ["quran"],
+        "quran": ["al-quran"],
+    }
+    for known, extra_aliases in source_aliases.items():
+        if known in source:
+            aliases.extend(extra_aliases)
+    for term in re.findall(r"\b(?:romans|matthew|dhammapada|gita|quran|upanishad|sutta)\b", source):
+        aliases.append(term)
+    return [alias for alias in dict.fromkeys(aliases) if len(alias) >= 4]
+
+
+def _normalized_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "").lower()).strip()
+
+
+def _contains_source_alias(text: str, alias: str) -> bool:
+    if " " in alias or ":" in alias or "-" in alias:
+        return alias in text
+    return bool(re.search(rf"\b{re.escape(alias)}\b", text))
+
+
+def _contains_any_source_alias(text: str, aliases: list[str]) -> bool:
+    return any(_contains_source_alias(text, alias) for alias in aliases)
+
+
+def _attributed_source_key(sentence_lower: str, indexed: list[dict[str, Any]]) -> str:
+    attribution_verbs = (
+        "advises",
+        "teaches",
+        "reminds",
+        "says",
+        "warns",
+        "suggests",
+        "points",
+        "calls",
+        "encourages",
+        "highlights",
+        "shows",
+    )
+    for item in indexed:
+        for alias in item["aliases"]:
+            alias_pattern = re.escape(alias)
+            pattern = (
+                rf"(?:^|(?:similarly|also|in contrast|instead)\s*,?\s+)"
+                rf"(?:the\s+)?{alias_pattern}(?:\s+also)?\s+"
+                rf"(?:{'|'.join(attribution_verbs)})\b"
+            )
+            if re.search(pattern, sentence_lower):
+                return item["key"]
+    return ""
+
+
+def _quote_owner_key(sentence: str, indexed: list[dict[str, Any]]) -> str:
+    for quote in re.findall(r"[\"“](.*?)[\"”]", sentence):
+        normalized_quote = _normalized_text(quote)
+        if len(normalized_quote) < 12:
+            continue
+        owners = [
+            item["key"]
+            for item in indexed
+            if item["translation"] and normalized_quote in item["translation"]
+        ]
+        if len(owners) == 1:
+            return owners[0]
+    return ""
+
+
+def _parenthetical_reference_owner_key(sentence_lower: str, indexed: list[dict[str, Any]]) -> str:
+    for parenthetical in re.findall(r"\(([^)]*)\)", sentence_lower):
+        owners = [
+            item["key"]
+            for item in indexed
+            if _contains_any_source_alias(parenthetical, item["aliases"])
+        ]
+        if len(owners) == 1:
+            return owners[0]
+    return ""
 
 
 def _focus_term_in_text(term: str, text: str) -> bool:
@@ -568,13 +854,25 @@ def _synthesis_rejection_reason(dilemma: str, citations: list[dict[str, Any]], p
         return "prompt_like_response"
     if not re.search(r"^(?:one[- ]line summary|summary)\s*:\s*\S+", pathway, re.I | re.M):
         return "missing_summary_section"
+    if not re.search(r"(?:^|[\n.]\s*)scripture grounding\s*:\s*\S+", pathway, re.I | re.M):
+        return "missing_scripture_grounding_section"
+    if _scripture_source_mismatches(citations, pathway):
+        return "scripture_source_mismatch"
     if _unsupported_relationship_drift(dilemma, pathway):
         return "unsupported_relationship_drift"
     if not _is_summary_relevant(dilemma, citations, pathway):
         return "summary_not_relevant_to_query"
-    if _is_business_integrity_dilemma(dilemma) and _business_integrity_answer_drifted(pathway):
+    if _is_dropshipping_scam_dilemma(dilemma) and _business_integrity_answer_drifted(pathway):
         return "business_integrity_drift"
     return ""
+
+
+def _should_retry_synthesis_rejection(reason: str) -> bool:
+    return reason in {
+        "missing_scripture_grounding_section",
+        "summary_not_relevant_to_query",
+        "scripture_source_mismatch",
+    }
 
 
 def _contains_prompt_like_response_text(pathway: str) -> bool:
@@ -615,9 +913,46 @@ def _business_integrity_answer_drifted(pathway: str) -> bool:
 
 def _is_business_integrity_dilemma(value: str) -> bool:
     lower = value.lower()
-    business_terms = {"dropshipping", "business", "selling", "seller", "customer", "profit"}
-    integrity_terms = {"scam", "scamming", "honest", "integrity", "mislead", "fraud", "trust"}
+    business_terms = {
+        "business",
+        "competitor",
+        "competitors",
+        "wealth",
+        "wealthy",
+        "profit",
+        "profits",
+        "selling",
+        "seller",
+        "customer",
+        "dropshipping",
+    }
+    integrity_terms = {
+        "ethical",
+        "ethics",
+        "integrity",
+        "honest",
+        "honesty",
+        "corner",
+        "corners",
+        "scam",
+        "scamming",
+        "mislead",
+        "fraud",
+        "trust",
+    }
     return any(term in lower for term in business_terms) and any(term in lower for term in integrity_terms)
+
+
+def _is_dropshipping_scam_dilemma(value: str) -> bool:
+    lower = value.lower()
+    return "dropshipping" in lower and any(term in lower for term in {"scam", "scamming"})
+
+
+def _is_betrayal_revenge_dilemma(value: str) -> bool:
+    lower = value.lower()
+    betrayal_terms = {"betray", "betrayed", "betrayal", "lies", "lying", "spread", "spreading", "anger", "hatred"}
+    revenge_terms = {"revenge", "retaliate", "retaliation", "forgive", "forgiveness"}
+    return any(term in lower for term in betrayal_terms) and any(term in lower for term in revenge_terms)
 
 
 def _is_caregiver_burnout_dilemma(value: str) -> bool:

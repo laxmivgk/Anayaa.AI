@@ -243,7 +243,7 @@ For an Ollama-style public beta, Anayaa is meant to be installed and run on the 
 First-time users start with:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.4-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.5-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
