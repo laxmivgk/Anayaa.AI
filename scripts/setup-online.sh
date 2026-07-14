@@ -7,6 +7,10 @@ BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
 VENV_DIR="$BACKEND/anayaa"
 OLLAMA_URL="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
+CLI_CMD="${ANAYAA_CLI_COMMAND:-./scripts/anayaa}"
+
+PKG_RESOURCES_WARNING_FILTER="ignore:pkg_resources is deprecated as an API:UserWarning"
+export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}${PKG_RESOURCES_WARNING_FILTER}"
 
 log() { echo "[anayaa-online-setup] $*"; }
 warn() { echo "[anayaa-online-setup] WARNING: $*" >&2; }
@@ -19,7 +23,7 @@ require_online() {
   fi
 
   echo "[anayaa-online-setup] ERROR: Online setup requires internet access." >&2
-  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ./scripts/anayaa setup" >&2
+  echo "[anayaa-online-setup] Connect to Wi-Fi and re-run: ${CLI_CMD} setup" >&2
   echo "[anayaa-online-setup] This step installs Python/npm dependencies, caches embedding assets, pulls Ollama models, and seeds retrieval." >&2
   exit 1
 }
@@ -51,7 +55,7 @@ PY
   echo "[anayaa-online-setup] ERROR: Milvus Lite cannot bind a local Unix socket in this shell." >&2
   echo "[anayaa-online-setup] Milvus Lite needs local socket permissions to seed backend/data/milvus.db." >&2
   echo "[anayaa-online-setup] Run setup from a normal macOS Terminal or WSL/Linux shell, not a restricted/sandboxed shell:" >&2
-  echo "[anayaa-online-setup]   cd \"$ROOT\" && ./scripts/anayaa setup" >&2
+  echo "[anayaa-online-setup]   cd \"$ROOT\" && ${CLI_CMD} setup" >&2
   exit 1
 }
 
@@ -176,6 +180,8 @@ ensure_ollama_models() {
   fi
 
   for model in "${models[@]}"; do
+    # Model pulls are idempotent; a resumed setup should skip anything already
+    # present in the user's local Ollama store.
     if ollama list 2>/dev/null | awk 'NR>1 {print $1}' | grep -qx "$model"; then
       log "Ollama model already present: $model"
     else
@@ -195,6 +201,8 @@ cache_embedding_model() {
 seed_retrieval() {
   cd "$BACKEND"
   unset MILVUS_URI
+  # seed_milvus.py owns corpus count/checksum comparison and recreates vectors
+  # when backend/data/scriptures.json changed.
   log "Seeding PostgreSQL and Milvus Lite scripture data..."
   OFFLINE_MODE=false "$VENV_DIR/bin/python" scripts/seed_milvus.py
 }
@@ -213,7 +221,7 @@ main() {
   cache_embedding_model
   seed_retrieval
   log "Online setup complete. You can now run Anayaa with OFFLINE_MODE=true:"
-  log "  ./scripts/anayaa serve"
+  log "  ${CLI_CMD} serve"
 }
 
 main "$@"

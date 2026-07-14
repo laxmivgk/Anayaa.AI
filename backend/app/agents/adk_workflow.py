@@ -142,6 +142,8 @@ SCRIPTURE_BRIDGES = {
 
 
 def _runtime_context(ctx) -> dict[str, Any]:
+    # ADK session state must stay serializable, so non-serializable handles such as
+    # Postgres, Redis, EcoTracker, and latency tracking live in this per-request map.
     request_id = ctx.state.get("request_id")
     if not request_id:
         return {}
@@ -182,6 +184,8 @@ def _attach_agent_latency(ctx, result: dict[str, Any]) -> dict[str, Any]:
 async def _finalize_with_trace(ctx, result: dict[str, Any]) -> dict[str, Any]:
     result = _attach_agent_latency(ctx, result)
     runtime = _runtime_context(ctx)
+    # Persist the final product-visible contract, including failure statuses, so
+    # release debugging can reconstruct what the agents actually returned.
     await persist_request_plan_trace(runtime.get("pg"), str(result.get("requestId") or ctx.state.get("request_id") or ""), result)
     return result
 
@@ -564,6 +568,8 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     elif audit and not audit.get("passed", False):
         reason = "Judge found quality gaps; revise using audit hints before the next attempt."
 
+    # Retry planning is intentionally LLM-driven. If it fails, Anayaa finalizes
+    # with an explicit status instead of inventing a deterministic backup answer.
     retry_plan = None
     retry_plan_error = None
     try:
@@ -656,6 +662,8 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     use_multi_query = bool(payload.get("multiQueryEnabled")) and int(payload.get("reactTurn") or 1) == 1 and len(sub_queries) > 1
     retrieval_queries = sub_queries[:3] if use_multi_query else [search_query]
     try:
+        # Scripture access goes through the MCP tool process only; the workflow
+        # does not read Milvus directly, which keeps tool use auditable.
         with _track_agent(
             ctx,
             "McpRetriever",
@@ -694,6 +702,8 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     reranked = retrieval.get("reranked", [])
     top_score = _top_retrieval_score(reranked)
     query_supported = _retrieval_matches_query(dilemma, reranked)
+    # A high vector score is not enough: the retrieved verses must also overlap
+    # the user's actual dilemma before synthesis is allowed.
     context_sufficient = bool(reranked) and query_supported and top_score >= settings.retrieval_confidence_threshold
     effective_top_score = top_score if query_supported else 0
 
@@ -739,6 +749,8 @@ async def synthesize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         _mark_agent(ctx, "Synthesizer", category="llm", metadata={"reason": "context_insufficient"})
         return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
     if payload.get("preSynthesisApprovalRequired"):
+        # Interactive Guidance pauses here so the user can approve or adjust the
+        # evidence set before any final moral guidance is generated.
         _mark_agent(ctx, "Synthesizer", category="llm", metadata={"reason": "pre_synthesis_approval"})
         return {**payload, "moralPathway": None, "quantizedMetrics": None, "synthesisEngine": None}
 
@@ -933,6 +945,8 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         return await _finalize_with_trace(ctx, result)
 
     if not payload.get("contextSufficient", True):
+        # Retrieval failures and weak retrieval are different user states. Keep
+        # them separate so users know whether to repair setup or rephrase.
         retrieval_payload = {
             "candidates": [],
             "reranked": payload.get("rerankedCitations", []),
@@ -983,6 +997,8 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         return await _finalize_with_trace(ctx, result)
 
     if payload.get("preSynthesisApprovalRequired"):
+        # HITL checkpoints expose concepts and candidate scriptures, not hidden
+        # chain-of-thought, and resume later through the same audited pipeline.
         candidate_items = payload.get("rerankedCitations") or payload.get("candidates") or []
         selected_verse_ids = [
             str((item.get("verse") or {}).get("id"))
@@ -1228,6 +1244,8 @@ async def run_adk_pipeline(
         await persist_request_plan_trace(pg, request_id, cached_result)
         return cached_result
 
+    # The runtime map is removed in finally so long-lived local serving does not
+    # accumulate handles after ADK sessions complete or error.
     _runtime_contexts[request_id] = {"pg": pg, "redis": redis, "eco": eco, "latency": latency}
     session_id: str | None = None
     try:

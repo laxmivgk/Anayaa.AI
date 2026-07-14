@@ -22,16 +22,3 @@ If you may harm yourself, harm someone else, or cannot stay safe, contact local 
 ## Scripture and Interpretation
 
 Anayaa retrieves and summarizes scripture passages from the configured local corpus. Interpretations may be incomplete or imperfect. For religious, spiritual, or cultural matters, consider consulting a trusted teacher, community leader, or tradition-specific source.
-
-## Public Release Readiness
-
-Before public distribution, review:
-
-- scripture and translation licensing
-- privacy policy wording
-- safety disclaimers
-- data retention settings
-- model and dependency licenses
-- platform-specific installation behavior
-
-Ancient source texts may be public domain, but specific translations and datasets may have separate licensing restrictions.

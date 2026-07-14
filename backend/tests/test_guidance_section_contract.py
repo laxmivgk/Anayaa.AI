@@ -33,6 +33,8 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
     assert "Citation anchors:" in prompt
     assert "Isha Upanishad Chapter 1:Verse 1 anchors: stewardship, renunciation" in prompt
     assert "name two exact sources from Citation anchors and reuse at least one anchor keyword from each" in prompt
+    assert "never mix sources" in prompt
+    assert "if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible" in prompt
     assert "Start with a practical verb" not in prompt
     assert "situation-specific moral stance" not in prompt
 
@@ -208,6 +210,73 @@ def test_clean_synthesis_output_merges_duplicate_next_step_sections():
     assert output.count("Next step:") == 1
     assert "Send one short apology" in output
     assert "Give your friend space" in output
+
+
+def test_synthesis_rejects_crossed_scripture_quote_attribution():
+    citations = [
+        {
+            "id": "c3",
+            "faith": "Christianity",
+            "source": "Holy Bible: Romans",
+            "chapter": "Chapter 12",
+            "verse": "Verse 21",
+            "translation": "Do not be overcome by evil, but overcome evil with good.",
+            "keywords": ["betrayal", "retaliation", "forgiveness", "anger"],
+        },
+        {
+            "id": "h2",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 63",
+            "translation": "From anger arises complete delusion, and from delusion bewilderment of memory.",
+            "keywords": ["anger", "rationality", "delusion", "mind"],
+        },
+    ]
+    pathway = (
+        "Summary: Do not retaliate; protect yourself with truth and calm boundaries.\n"
+        "Reflection: Betrayal can make anger feel strong.\n"
+        "Judgement: Choose truthful boundaries instead of revenge.\n"
+        "Next step: Write down what was said and limit contact if needed.\n"
+        "Scripture grounding: The Bhagavad Gita also advises us to \"overcome evil with good\" "
+        "(Holy Bible: Romans Chapter 12:Verse 21), which supports responding with truth. "
+        "The Dhammapada reminds us that hatred does not end hatred."
+    )
+
+    assert _synthesis_rejection_reason("betrayed and angry; revenge or forgive?", citations, pathway) == "scripture_source_mismatch"
+
+
+def test_synthesis_allows_correct_scripture_quote_attribution():
+    citations = [
+        {
+            "id": "c3",
+            "faith": "Christianity",
+            "source": "Holy Bible: Romans",
+            "chapter": "Chapter 12",
+            "verse": "Verse 21",
+            "translation": "Do not be overcome by evil, but overcome evil with good.",
+            "keywords": ["betrayal", "retaliation", "forgiveness", "anger"],
+        },
+        {
+            "id": "h2",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 63",
+            "translation": "From anger arises complete delusion, and from delusion bewilderment of memory.",
+            "keywords": ["anger", "rationality", "delusion", "mind"],
+        },
+    ]
+    pathway = (
+        "Summary: Do not retaliate; protect yourself with truth and calm boundaries.\n"
+        "Reflection: Betrayal can make anger feel strong.\n"
+        "Judgement: Choose truthful boundaries instead of revenge.\n"
+        "Next step: Write down what was said and limit contact if needed.\n"
+        "Scripture grounding: Holy Bible: Romans teaches \"overcome evil with good,\" which supports not retaliating. "
+        "The Bhagavad Gita warns that anger leads to delusion, which supports pausing before action."
+    )
+
+    assert _synthesis_rejection_reason("betrayed and angry; revenge or forgive?", citations, pathway) == ""
 
 
 def test_clean_synthesis_output_merges_duplicate_summary_sections():

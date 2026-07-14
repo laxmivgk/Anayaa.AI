@@ -8,7 +8,7 @@ from typing import Any
 from app.llm.router import select_model
 
 CACHE_SCHEMA_VERSION = "semantic_cache_schema_v2"
-PROMPT_VERSION = "synthesis_prompt_v7"
+PROMPT_VERSION = "synthesis_prompt_v9"
 PLANNER_VERSION = "llm_planner_compact_v3"
 RETRIEVAL_VERSION = "mcp_milvus_graph_rerank_v3"
 JUDGE_VERSION = "llm_judge_compact_grounding_contract_v3"
