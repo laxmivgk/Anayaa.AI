@@ -117,7 +117,7 @@ The visible answer is organized around:
 
 ### Guidance Audit
 
-![Anayaa Guidance Audit screen](./docs/assets/screenshots/guidance audit.png)
+![Anayaa Guidance Audit screen](./docs/assets/screenshots/guidance_audit.png)
 
 ## Architecture
 
