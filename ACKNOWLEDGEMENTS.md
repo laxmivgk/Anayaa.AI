@@ -7,9 +7,6 @@ This project relies on third-party open-source software, models, datasets, and c
 ## 1. Custom and Gated AI Model Licenses
 The following machine learning models are used under specialized, custom community licenses provided by their respective creators. By using this project, you agree to comply with their specific terms:
 
-*   **Gemma / gemma2:2b** 
-    *   *License:* Google Gemma Terms of Use
-    *   *Notice:* Subject to the Google Gemma restrictive terms. https://ai.google.dev/gemma/prohibited_use_policy
 *   **Llama 3.2:3b**
     *   *License:* Meta Llama 3.2 Community License
     *   *Notice:* Applications built using this model must prominently display "Built with Meta Llama".https://developer.meta.com/ai/llama3_2/license/

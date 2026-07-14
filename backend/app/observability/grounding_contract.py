@@ -83,8 +83,6 @@ def _citation_terms(citation: dict[str, Any]) -> list[str]:
     terms: list[str] = []
     values = [
         *(citation.get("keywords") or []),
-        citation.get("source", ""),
-        citation.get("faith", ""),
         citation.get("translation", ""),
         citation.get("context", ""),
     ]
@@ -93,6 +91,35 @@ def _citation_terms(citation: dict[str, Any]) -> list[str]:
             if term not in terms:
                 terms.append(term)
     return terms
+
+
+def _source_aliases(citation: dict[str, Any]) -> list[str]:
+    source = re.sub(r"\s+", " ", str(citation.get("source") or citation.get("faith") or "").lower()).strip()
+    aliases = [source] if source else []
+    if ":" in source:
+        aliases.extend(part.strip() for part in source.split(":") if part.strip())
+    source_aliases = {
+        "holy bible": ["bible"],
+        "bhagavad gita": ["gita"],
+        "al-quran": ["quran"],
+        "quran": ["al-quran"],
+    }
+    for known, extra_aliases in source_aliases.items():
+        if known in source:
+            aliases.extend(extra_aliases)
+    for term in re.findall(r"\b(?:romans|matthew|dhammapada|gita|quran|upanishad|sutta)\b", source):
+        aliases.append(term)
+    return [alias for alias in dict.fromkeys(aliases) if len(alias) >= 4]
+
+
+def _contains_source_alias(text: str, alias: str) -> bool:
+    if " " in alias or ":" in alias or "-" in alias:
+        return alias in text
+    return bool(re.search(rf"\b{re.escape(alias)}\b", text))
+
+
+def _citation_source_named(citation: dict[str, Any], grounding_section: str) -> bool:
+    return any(_contains_source_alias(grounding_section, alias) for alias in _source_aliases(citation))
 
 
 def _scripture_grounding_section(pathway: str) -> str:
@@ -125,18 +152,25 @@ def evaluate_grounding_contract(query: str, citations: list[dict[str, Any]], pat
     for index, citation in enumerate(citations):
         citation_id = str(citation.get("id") or citation.get("source") or index)
         citation_matches = [term for term in _citation_terms(citation)[:12] if term in grounding_section]
-        if citation_matches:
+        citation_grounded = bool(citation_matches and _citation_source_named(citation, grounding_section))
+        if citation_grounded:
             grounded_citation_ids.append(citation_id)
-        for term in citation_matches:
-            if term not in grounded_terms:
-                grounded_terms.append(term)
+            for term in citation_matches:
+                if term not in grounded_terms:
+                    grounded_terms.append(term)
 
     required_query_matches = 1 if len(query_terms) <= 2 else 2
     unsupported = _unsupported_assumptions(pathway)
+    required_grounded_citations = 2 if len(citations) >= 2 else 1
+    required_grounded_terms = 2 if len(citations) >= 2 else 1
+    limited_grounding = len(citations) == 1
     checks = {
-        "minimumTwoCitations": len(citations) >= 2,
+        "minimumCitationsAvailable": len(citations) >= 1,
         "scriptureGroundingSectionPresent": bool(grounding_section),
-        "citationTermsInScriptureGrounding": len(grounded_terms) >= 2 and len(grounded_citation_ids) >= 2,
+        "citationTermsInScriptureGrounding": (
+            len(grounded_terms) >= required_grounded_terms
+            and len(grounded_citation_ids) >= required_grounded_citations
+        ),
         "answerUsesUserTopicTerms": len(matched_query_terms) >= required_query_matches,
         "noUnsupportedAssumptions": not unsupported,
     }
@@ -151,6 +185,8 @@ def evaluate_grounding_contract(query: str, citations: list[dict[str, Any]], pat
         "groundedTerms": grounded_terms[:8],
         "matchedQueryTerms": matched_query_terms[:8],
         "unsupportedAssumptions": unsupported[:8],
+        "limitedGrounding": limited_grounding,
+        "groundingRequirement": "limited_single_citation" if limited_grounding else "standard_multi_citation",
     }
 
 
@@ -183,7 +219,7 @@ def apply_grounding_contract(
     failed_dimensions = list(dict.fromkeys([*audit.get("failedDimensions", []), "grounding_contract"]))
     revision_hints = list(audit.get("revision_hints", []))
     revision_hints.append(
-        "Revise the final answer so Scripture grounding uses at least two retrieved citations, repeats citation terms, stays on the user's topic, and avoids unsupported assumptions."
+        "Revise the final answer so Scripture grounding uses the retrieved citation(s), repeats citation terms, stays on the user's topic, and avoids unsupported assumptions."
     )
     rationale = (
         "The LLM score check passed, but the final answer did not connect clearly enough to the retrieved scriptures."

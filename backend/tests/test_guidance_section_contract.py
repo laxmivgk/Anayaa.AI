@@ -2,6 +2,7 @@ import pytest
 
 from app.agents.pipeline_errors import SynthesisRejectedError
 from app.llm.generator import (
+    SYNTHESIS_SYSTEM_PROMPT,
     _build_synthesis_prompt,
     _clean_synthesis_output,
     _is_caregiver_burnout_dilemma,
@@ -28,15 +29,19 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
         "",
     )
 
-    assert "Judgement: say what choice seems wisest and kindest." in prompt
-    assert "Next step: give one concrete, stable action" in prompt
+    assert "Judgement: say what choice seems wisest and kindest, without naming scripture sources" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Next step: give a useful small sequence" in SYNTHESIS_SYSTEM_PROMPT
+    assert "one concrete action, one preparation detail" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not make the whole Next step only writing, documenting, or gathering evidence" in SYNTHESIS_SYSTEM_PROMPT
     assert "Citation anchors:" in prompt
-    assert "Isha Upanishad Chapter 1:Verse 1 anchors: stewardship, renunciation" in prompt
-    assert "name two exact sources from Citation anchors and reuse at least one anchor keyword from each" in prompt
-    assert "never mix sources" in prompt
-    assert "if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible" in prompt
+    assert "Isha Upanishad, Chapter 1, Verse 1 anchors: stewardship, renunciation" in prompt
+    assert "name every exact source from Citation anchors and reuse at least one anchor keyword from each" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Keep scripture names, chapter numbers, verse numbers, and citation labels only in Scripture grounding" in SYNTHESIS_SYSTEM_PROMPT
+    assert "never mix sources" in SYNTHESIS_SYSTEM_PROMPT
+    assert "if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Write exactly these 5 labeled sections" not in prompt
     assert "Start with a practical verb" not in prompt
-    assert "situation-specific moral stance" not in prompt
+    assert "situation-specific moral stance" not in SYNTHESIS_SYSTEM_PROMPT
 
 
 def test_synthesis_prompt_preserves_confirmed_friend_role_after_pii_redaction():
@@ -58,8 +63,8 @@ def test_synthesis_prompt_preserves_confirmed_friend_role_after_pii_redaction():
 
     assert _relationship_role_groups(dilemma) == {"friend"}
     assert "Known relationship roles from the dilemma: friend." in prompt
-    assert "use only these confirmed roles or neutral wording" in prompt
-    assert "do not change a friend into a mom" in prompt
+    assert "use only those confirmed roles or neutral wording" in SYNTHESIS_SYSTEM_PROMPT
+    assert "do not change one relationship into another" in SYNTHESIS_SYSTEM_PROMPT
     assert "such as your mom, your friend" not in prompt
 
 
@@ -85,12 +90,80 @@ def test_caregiver_burnout_prompt_prioritizes_support_over_business_finances():
     )
 
     assert _is_caregiver_burnout_dilemma(dilemma)
-    assert "treat exhaustion, hopelessness, and 'giving up' as the urgent center" in prompt
-    assert "must not start with business finances, debt tracking, saving money, or productivity" in prompt
-    assert "contact one real person today" in prompt
-    assert "parent-care coverage" in prompt
-    assert "local emergency or crisis support now" in prompt
-    assert "never print [NAME_REDACTED] in final guidance" in prompt
+    assert "treat exhaustion, hopelessness, and 'giving up' as the urgent center" in SYNTHESIS_SYSTEM_PROMPT
+    assert "must not start with business finances, debt tracking, saving money, or productivity" in SYNTHESIS_SYSTEM_PROMPT
+    assert "contact one real person today" in SYNTHESIS_SYSTEM_PROMPT
+    assert "parent-care coverage" in SYNTHESIS_SYSTEM_PROMPT
+    assert "local emergency or crisis support now" in SYNTHESIS_SYSTEM_PROMPT
+    assert "never print [NAME_REDACTED] in final guidance" in SYNTHESIS_SYSTEM_PROMPT
+
+
+def test_caregiver_burnout_support_first_answer_passes_relevance_guardrail():
+    dilemma = (
+        "I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted. "
+        "I feel like giving up on everything."
+    )
+    pathway = "\n".join(
+        [
+            "Summary: You are burned out and need immediate human support before trying to solve the business.",
+            "Reflection: Caring for a sick parent while feeling hopeless and exhausted is too much to carry alone.",
+            "Judgement: The wisest choice is to pause non-urgent business decisions and ask for help now.",
+            "Next step: Contact one trusted person today and say, I cannot carry this alone. Ask for one concrete relief action such as parent-care coverage, a meal, a ride, or help calling a doctor or respite resource; if you cannot stay safe, contact emergency or crisis support now.",
+            "Scripture grounding: Dhammapada supports steadying the mind before action, which fits asking for support and rest before making decisions.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "translation": "Mind precedes all things.",
+                "keywords": ["mind", "peace"],
+            }
+        ],
+        pathway,
+    ) == ""
+
+
+def test_caregiver_burnout_guard_accepts_natural_support_and_risk_wording():
+    dilemma = (
+        "I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted. "
+        "I feel like giving up on everything."
+    )
+    pathway = "\n".join(
+        [
+            "Summary: This is too much to carry alone, and immediate support matters more than fixing the business today.",
+            "Reflection: You sound overwhelmed and worn down from caring for your parent while trying to keep everything else afloat.",
+            "Judgement: The wisest choice is to pause non-urgent decisions and let someone help you before exhaustion takes over.",
+            "Next step: Call a family member or trusted friend today and ask them to cover one concrete task, such as sitting with your parent, bringing food, or helping arrange respite. If you feel at risk of hurting yourself, contact crisis support now.",
+            "Scripture grounding: Dhammapada supports steadying the mind before action, which fits asking for support and rest before making decisions.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "translation": "Mind precedes all things.",
+                "keywords": ["mind", "peace"],
+            }
+        ],
+        pathway,
+    ) == ""
+
+
+def test_next_step_prompt_handles_not_listening_with_boundary_not_only_documentation():
+    assert "give the other person a real chance to respond" in SYNTHESIS_SYSTEM_PROMPT
+    assert "If they do not listen" in SYNTHESIS_SYSTEM_PROMPT
+    assert "set a clear boundary" in SYNTHESIS_SYSTEM_PROMPT
+    assert "note key facts only if it helps protect truth" in SYNTHESIS_SYSTEM_PROMPT
+    assert "specific constructive conversation or accountability move" in SYNTHESIS_SYSTEM_PROMPT
 
 
 def test_clean_synthesis_output_removes_prompt_echo_before_summary():
@@ -277,6 +350,65 @@ def test_synthesis_allows_correct_scripture_quote_attribution():
     )
 
     assert _synthesis_rejection_reason("betrayed and angry; revenge or forgive?", citations, pathway) == ""
+
+
+def test_synthesis_rejects_scripture_reference_outside_grounding_section():
+    citations = [
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but not to the fruits of action.",
+            "keywords": ["duty", "work", "detachment", "livelihood"],
+        },
+        {
+            "id": "u1",
+            "faith": "Hinduism",
+            "source": "Isha Upanishad",
+            "chapter": "Chapter 1",
+            "verse": "Verse 1",
+            "translation": "Enjoy through renunciation; do not covet what belongs to another.",
+            "keywords": ["renunciation", "joy", "wealth", "detachment"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Losing livelihood to automation is frightening, but your response can stay steady.",
+            "Reflection: Fear about automation can make the future feel closed.",
+            "Judgement: Focus on fulfilling your duties, as suggested by Bhagavad Gita Chapter 2:Verse 47.",
+            "Next step: Write down one skill or client relationship you can strengthen today.",
+            "Scripture grounding: Bhagavad Gita, Chapter 2, Verse 47 supports focusing on duty without attachment to results. Isha Upanishad, Chapter 1, Verse 1 supports loosening fear around possession and security.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason("Will automation make me lose my livelihood?", citations, pathway) == "scripture_reference_outside_grounding"
+
+
+def test_synthesis_allows_scripture_references_only_in_grounding_section():
+    citations = [
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but not to the fruits of action.",
+            "keywords": ["duty", "work", "detachment", "livelihood"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Losing livelihood to automation is frightening, but your response can stay steady.",
+            "Reflection: Fear about automation can make the future feel closed.",
+            "Judgement: Focus on what you can control: honest work, preparation, and calm choices.",
+            "Next step: Write down one skill or client relationship you can strengthen today.",
+            "Scripture grounding: Bhagavad Gita, Chapter 2, Verse 47 supports focusing on duty without attachment to results.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason("Will automation make me lose my livelihood?", citations, pathway) == ""
 
 
 def test_clean_synthesis_output_merges_duplicate_summary_sections():

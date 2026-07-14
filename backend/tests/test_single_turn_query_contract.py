@@ -11,6 +11,7 @@ from app.security.sanitizer import sanitize_query
 
 def test_query_body_accepts_bounded_previous_context():
     assert "previousContext" in QueryBody.model_fields
+    assert "usePreviousContext" in QueryBody.model_fields
     assert "query" in QueryBody.model_fields
     assert "preSynthesisVerification" in QueryBody.model_fields
 

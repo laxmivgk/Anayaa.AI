@@ -1,6 +1,7 @@
 from app.agents.adk_workflow import _retrieval_matches_query
 from app.agents.workflow import _extract_planner_keywords, rewrite_malformed_query
 from app.llm.generator import (
+    SYNTHESIS_SYSTEM_PROMPT,
     _business_integrity_answer_drifted,
     _build_synthesis_prompt,
     _is_business_integrity_dilemma,
@@ -77,9 +78,10 @@ def test_dropshipping_prompt_blocks_unsupported_business_assumptions():
         "",
     )
 
-    assert "not automatically scamming" in prompt
-    assert "Do not assume the user has invested money" in prompt
-    assert "Do not name specific commercial platforms" in prompt
+    assert "not automatically scamming" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not assume the user has invested money" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not name specific commercial platforms" in SYNTHESIS_SYSTEM_PROMPT
+    assert "not automatically scamming" not in prompt
 
 
 def test_general_business_integrity_prompt_does_not_force_dropshipping_terms():
@@ -103,8 +105,8 @@ def test_general_business_integrity_prompt_does_not_force_dropshipping_terms():
     )
 
     assert _is_business_integrity_dilemma(dilemma)
-    assert "wealth-versus-integrity conflict" in prompt
-    assert "pursuing wealth is not wrong by itself" in prompt
+    assert "wealth-versus-integrity conflict" in SYNTHESIS_SYSTEM_PROMPT
+    assert "pursuing wealth is not wrong by itself" in SYNTHESIS_SYSTEM_PROMPT
     assert "answer directly whether the business model is automatically wrong" not in prompt
     assert "not automatically scamming" not in prompt
 

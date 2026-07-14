@@ -203,6 +203,43 @@ def test_unrelated_query_ignores_previous_context_list():
     assert "Previous dilemma" not in result["rewrittenQuery"]
 
 
+def test_explicit_follow_up_uses_previous_context_even_without_follow_up_markers():
+    result = rewrite_malformed_query(
+        "I don't have anyone to share my duties. What should I do?",
+        previous_context={
+            "turns": [
+                {
+                    "question": (
+                        "I have taken on the care of my sick parent while trying to manage a failing business. "
+                        "I feel entirely burned out, hopeless, and physically exhausted."
+                    )
+                },
+            ]
+        },
+        use_previous_context=True,
+    )
+
+    assert result["previousContextUsed"] is True
+    assert result["previousContextQuestion"].startswith("I have taken on the care of my sick parent")
+    assert "Previous dilemma: I have taken on the care of my sick parent" in result["rewrittenQuery"]
+    assert "Follow-up question: I don't have anyone to share my duties" in result["rewrittenQuery"]
+
+
+def test_same_duties_query_stays_standalone_without_explicit_follow_up_signal():
+    result = rewrite_malformed_query(
+        "I don't have anyone to share my duties. What should I do?",
+        previous_context={
+            "turns": [
+                {"question": "I have taken on the care of my sick parent while managing a failing business."},
+            ]
+        },
+    )
+
+    assert result["previousContextUsed"] is False
+    assert result["previousContextQuestion"] is None
+    assert "Previous dilemma" not in result["rewrittenQuery"]
+
+
 def test_unrelated_query_with_that_does_not_use_previous_context():
     result = rewrite_malformed_query(
         "While looking for a job, should I choose one that fulfills my needs or pick randomly?",

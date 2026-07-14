@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Anayaa.AI Privacy Notice</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f8f5ef;
+        color: #2f2f22;
+        font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+        line-height: 1.6;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+        padding: 48px 24px 64px;
+      }
+      h1,
+      h2 {
+        line-height: 1.2;
+      }
+      h1 {
+        font-size: 2.25rem;
+        font-style: italic;
+        margin: 0 0 8px;
+      }
+      h2 {
+        margin-top: 32px;
+      }
+      p,
+      li {
+        font-size: 1rem;
+      }
+      a {
+        color: #5a5a40;
+        font-weight: 700;
+      }
+      .note {
+        border: 1px solid #d9d2c5;
+        background: #fffdf8;
+        border-radius: 12px;
+        padding: 16px 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Anayaa.AI Privacy Notice</h1>
+      <p class="note">Anayaa is designed as a local-first app. In the default setup, the app runs on your machine and your browser talks to <code>http://127.0.0.1:8000</code>.</p>
+
+      <h2>Default Local-First Behavior</h2>
+      <ul>
+        <li>The web app is served locally.</li>
+        <li>User accounts are stored in local PostgreSQL.</li>
+        <li>Sessions, rate limits, and cache entries are stored in local Redis.</li>
+        <li>Scripture retrieval uses local corpus data and local Milvus Lite data.</li>
+        <li>Guidance synthesis uses local Ollama models unless optional cloud routing is configured.</li>
+      </ul>
+
+      <h2>Data Stored Locally</h2>
+      <p>Anayaa may store login records, password hashes, session state, scrubbed submitted dilemmas, retrieved citations, guidance outputs, audit scores, feedback records, request metrics, and password-reset token hashes.</p>
+      <p>The browser stores the active JWT, login email, pseudonymous user key, and scrubbed recent question history in local storage. Logging out removes the active JWT, email, and user key, but retained local question history may remain for follow-up continuity.</p>
+
+      <h2>Password Reset</h2>
+      <p>Password reset codes and links are printed to the backend terminal for local-first account recovery.</p>
+
+      <h2>Sensitive Information</h2>
+      <p>Avoid entering highly sensitive personal information, including full private names, addresses, phone numbers, government IDs, medical record details, legal case details, and financial account details. Anayaa includes sanitizer and PII-scrubbing protections, but no automated filter is perfect.</p>
+
+      <h2>Optional Cloud Routing</h2>
+      <p>If you configure a cloud provider key, selected requests may be sent to that provider depending on routing settings. Do not enable cloud routing unless you understand and accept that provider's data handling terms.</p>
+
+      <p><a href="/">Return to Anayaa.AI</a></p>
+    </main>
+  </body>
+</html>
