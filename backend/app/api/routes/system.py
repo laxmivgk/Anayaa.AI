@@ -30,7 +30,7 @@ async def system_status(request: Request):
     health = await check_health(pg, redis, getattr(request.app.state, "milvus_status", None))
     return {
         "quantizedModel": "qwen3:4b-local",
-        "speculativeDraftModel": "gemma2:2b-local",
+        "synthesisModel": "llama3.2:3b-local",
         "acceleration": "Local Apple Silicon / NPU Node",
         "redisCacheSize": "active" if health.get("redis") else "unavailable",
         "streamBufferCount": len(get_transaction_streams()),
@@ -154,19 +154,19 @@ def _hitl_compile_synthesis_tone(base_tone: str, concepts: list[str], *, retry: 
         parts.append(f"Interactive compile selected concepts: {', '.join(focus_terms)}.")
     parts.append(
         "Interactive compile mode: use the selected scriptures as the grounding source. "
-        "In Scripture grounding, name at least two selected scripture sources exactly and reuse one anchor "
-        "keyword from each."
+        "In Scripture grounding, name the selected scripture source(s) exactly and reuse one anchor "
+        "keyword from each selected source."
     )
     if retry:
         parts.append(
             "Regenerate because the previous draft did not prove enough support from the selected scripture passages. "
-            "Make the Scripture grounding section explicit, concrete, and tied to two selected citations."
+            "Make the Scripture grounding section explicit, concrete, and tied to the selected citation(s)."
         )
     return " ".join(part for part in parts if part)
 
 
 def _should_retry_hitl_compile(audit: dict, citations: list[dict]) -> bool:
-    if audit.get("passed") or len(citations) < 2:
+    if audit.get("passed") or not citations:
         return False
     failed = set(audit.get("failedDimensions") or [])
     min_score = int(audit.get("minScore") or 3)

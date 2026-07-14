@@ -13,6 +13,31 @@ export PYTHONWARNINGS="${PYTHONWARNINGS:+${PYTHONWARNINGS},}${PKG_RESOURCES_WARN
 log() { echo "[anayaa] $*"; }
 warn() { echo "[anayaa] WARNING: $*" >&2; }
 
+detect_lan_ip() {
+  local ip_addr=""
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v ipconfig >/dev/null 2>&1; then
+    ip_addr="$(ipconfig getifaddr en0 2>/dev/null || true)"
+    if [[ -z "$ip_addr" ]]; then
+      ip_addr="$(ipconfig getifaddr en1 2>/dev/null || true)"
+    fi
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v hostname >/dev/null 2>&1; then
+    ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v ip >/dev/null 2>&1; then
+    ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v ifconfig >/dev/null 2>&1; then
+    ip_addr="$(ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}' || true)"
+  fi
+
+  printf '%s' "$ip_addr"
+}
+
 online_setup_required() {
   local reason="$1"
   echo "[anayaa] ERROR: ${reason}" >&2
@@ -204,7 +229,7 @@ load_env() {
 
 ensure_ollama() {
   local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-  local models=(gemma2:2b qwen3:4b llama3.2:3b)
+  local models=(qwen3:4b llama3.2:3b)
 
   if ! command -v ollama >/dev/null 2>&1; then
     warn "Ollama is not installed. Install from https://ollama.com then re-run this script."
@@ -365,7 +390,19 @@ main() {
   if [[ "${ANAYAA_RELOAD:-false}" == "true" ]]; then
     reload_args=(--reload)
   fi
-  log "Starting Anayaa at http://${host}:${port}"
+  if [[ "$host" == "0.0.0.0" ]]; then
+    local lan_ip
+    lan_ip="$(detect_lan_ip)"
+    log "Starting Anayaa bound to 0.0.0.0:${port} for LAN access."
+    log "Computer URL: http://127.0.0.1:${port}"
+    if [[ -n "$lan_ip" ]]; then
+      log "Mobile URL: http://${lan_ip}:${port}"
+    else
+      warn "Could not detect a mobile URL automatically. Find this computer's LAN IP, then open http://<computer-ip>:${port}."
+    fi
+  else
+    log "Starting Anayaa at http://${host}:${port}"
+  fi
   if [[ "${#reload_args[@]}" -gt 0 ]]; then
     exec uvicorn app.main:app --host "$host" --port "$port" "${reload_args[@]}"
   fi

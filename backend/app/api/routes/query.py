@@ -30,6 +30,7 @@ class QueryBody(BaseModel):
     query: str = Field(min_length=1)
     preSynthesisVerification: bool = True
     previousContext: list[PreviousContextBody] = Field(default_factory=list, max_length=3)
+    usePreviousContext: bool = False
 
 
 def _model_facing_firewall_text(text: str) -> str:
@@ -129,6 +130,7 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
             hitl_enabled=settings.hitl_enabled and body.preSynthesisVerification,
             milvus=getattr(request.app.state, "milvus", None),
             previous_context=previous_context,
+            use_previous_context=body.usePreviousContext,
         )
     except PipelineError as exc:
         totals = await _finalize_request_eco(pg, request_id, user["email"], eco, False)

@@ -47,7 +47,7 @@ def test_grounding_contract_failure_uses_user_facing_copy():
             },
             "failedDimensions": ["grounding_contract"],
             "revision_hints": [
-                "Revise the final answer so Scripture grounding uses at least two retrieved citations, repeats citation terms, stays on the user's topic, and avoids unsupported assumptions."
+                "Revise the final answer so Scripture grounding uses the retrieved citation(s), repeats citation terms, stays on the user's topic, and avoids unsupported assumptions."
             ],
         },
         min_score=3,
@@ -69,4 +69,4 @@ def test_hitl_compile_grounding_failure_mentions_selected_scriptures_not_startin
 
     assert "selected in Interactive Guidance" in message
     assert "use The Interactive Guidance" not in message
-    assert "at least two selected passages" in message
+    assert "selected passage(s)" in message

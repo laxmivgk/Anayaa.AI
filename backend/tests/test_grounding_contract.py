@@ -37,7 +37,7 @@ def test_grounding_contract_passes_when_final_answer_proves_citation_and_query_g
 
     assert result["passed"] is True
     assert result["checks"] == {
-        "minimumTwoCitations": True,
+        "minimumCitationsAvailable": True,
         "scriptureGroundingSectionPresent": True,
         "citationTermsInScriptureGrounding": True,
         "answerUsesUserTopicTerms": True,
@@ -46,10 +46,72 @@ def test_grounding_contract_passes_when_final_answer_proves_citation_and_query_g
     assert result["citationCount"] == 2
     assert result["groundedCitationCount"] == 2
     assert result["groundedCitationIds"] == ["gita-2-47", "matthew-16-26"]
+    assert result["limitedGrounding"] is False
+    assert result["groundingRequirement"] == "standard_multi_citation"
     assert {"dropshipping", "scam"} <= set(result["matchedQueryTerms"])
 
 
-def test_grounding_contract_fails_without_two_grounded_citations_or_user_topic_terms():
+def test_grounding_contract_passes_with_one_grounded_citation_as_limited_grounding():
+    result = evaluate_grounding_contract(
+        "Is dropshipping a scam?",
+        [_citations()[0]],
+        "\n".join(
+            [
+                "One-line summary: Dropshipping is not automatically a scam, but it must be honest.",
+                "Reflection: The tension is between money pressure and integrity.",
+                "Judgement: Choose duty and integrity over misleading customers.",
+                "Next step: Check what you can truthfully promise before selling.",
+                "Scripture grounding: The Bhagavad Gita points to duty and integrity, so the advice is to sell only in a way you can honestly stand behind.",
+            ]
+        ),
+    )
+
+    assert result["passed"] is True
+    assert result["checks"]["minimumCitationsAvailable"] is True
+    assert result["checks"]["citationTermsInScriptureGrounding"] is True
+    assert result["citationCount"] == 1
+    assert result["groundedCitationCount"] == 1
+    assert result["limitedGrounding"] is True
+    assert result["groundingRequirement"] == "limited_single_citation"
+
+
+def test_grounding_contract_does_not_count_keyword_only_citation_as_grounded():
+    result = evaluate_grounding_contract(
+        "Will automation make me lose my livelihood?",
+        [
+            {
+                "id": "gita-2-47",
+                "faith": "Hinduism",
+                "source": "Bhagavad Gita",
+                "translation": "You have a right to perform your duty, but not to the fruits of action.",
+                "keywords": ["duty", "work", "detachment", "livelihood"],
+            },
+            {
+                "id": "isha-1-1",
+                "faith": "Hinduism",
+                "source": "Isha Upanishad",
+                "translation": "Enjoy through renunciation; do not covet what belongs to another.",
+                "keywords": ["renunciation", "joy", "wealth", "detachment"],
+            },
+        ],
+        "\n".join(
+            [
+                "One-line summary: Automation may threaten your livelihood, but your response can stay steady.",
+                "Reflection: It is natural to fear losing work.",
+                "Judgement: Focus on what you can control: honest work and preparation.",
+                "Next step: Write down one skill you can strengthen today.",
+                "Scripture grounding: Bhagavad Gita points to duty and detachment, which supports steady work without panic about outcomes or renunciation.",
+            ]
+        ),
+    )
+
+    assert result["passed"] is False
+    assert result["groundedCitationIds"] == ["gita-2-47"]
+    assert result["groundedCitationCount"] == 1
+    assert "citationTermsInScriptureGrounding" in result["failedChecks"]
+
+
+def test_grounding_contract_fails_without_grounded_citation_terms_or_user_topic_terms():
     result = evaluate_grounding_contract(
         "Is dropshipping a scam?",
         [_citations()[0]],
@@ -65,7 +127,7 @@ def test_grounding_contract_fails_without_two_grounded_citations_or_user_topic_t
     )
 
     assert result["passed"] is False
-    assert "minimumTwoCitations" in result["failedChecks"]
+    assert "minimumCitationsAvailable" not in result["failedChecks"]
     assert "citationTermsInScriptureGrounding" in result["failedChecks"]
     assert "answerUsesUserTopicTerms" in result["failedChecks"]
 

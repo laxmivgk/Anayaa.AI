@@ -4,10 +4,10 @@
 
 This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE.txt) per Kaggle Capstone requirements.
 
-However, this project interfaces with local foundational models (Meta Llama 3.2, Google Gemma, and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
+However, this project interfaces with local foundational models (Meta Llama 3.2 and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
 
 # Anayaa.AI
-Anayaa.AI is a local-first, resource-aware scripture-grounded guidance app for moral and life dilemmas. It uses lightweight local models, retrieval caching, and per-request Eco Audit metrics to make compute cost visible and reduce unnecessary generation. Anayaa is eco-conscious, not zero-impact: local AI still uses disk, memory, and energy.
+Anayaa.AI is a local-first, resource-aware scripture-grounded guidance app for moral and life dilemmas. It uses lightweight local models, retrieval caching, and per-request Guidance Audit metrics to make quality checks, grounding checks, and compute cost visible. Anayaa is eco-conscious, not zero-impact: local AI still uses disk, memory, and energy.
 
 ## Problem
 Anayaa.AI solves the problem of getting thoughtful, grounded guidance for moral and life dilemmas without relying on generic, unsupported chatbot advice. 
@@ -36,15 +36,15 @@ The project is built for local use.
 
 CodeCarbon Real-Time Audit (Resource-Aware Computing)
 Anayaa promotes eco-conscious measurement rather than a zero-impact claim:
-Environmental Impact Tracking: Displays estimated cumulative carbon footprint (in kilograms) and total edge compute energy consumed (in Watt-hours) during local model execution. Per-request metrics can be viewed in the Eco Audit tab.
+Environmental Impact Tracking: Displays estimated cumulative carbon footprint (in kilograms) and total edge compute energy consumed (in Watt-hours) during local model execution. Per-request metrics can be viewed under Resource Impact in the Guidance Audit tab.
 Power Draft Monitoring: Shows active CPU/GPU power estimates to make local compute cost visible and encourage lightweight, quantized on-device architectures where practical.
 
 - Backend: FastAPI, PostgreSQL, Redis, Milvus Lite, MCP, Google ADK, Ollama
 - Frontend: React 19, TypeScript, Vite 6, Tailwind CSS, lucide-react
 - Retrieval: scripture JSON corpus, ONNX local embeddings, Milvus hybrid search, graph expansion, reranking
 - Safety: sanitizer, regex firewall, deterministic PII scrubber with local NER support, MCP tool allowlist, G-Eval style audit, deterministic grounding checks
-- Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, server-side password reset tokens delivered by SMTP email or local terminal fallback
-- Local models: `gemma2:2b` for lightweight classification, `qwen3:4b` for planning/retry planning/judging, and `llama3.2:3b` for final guidance synthesis
+- Auth: PostgreSQL-backed users, salted PBKDF2 password hashes, JWT sessions, server-side password reset tokens delivered through the local backend terminal
+- Local models: `qwen3:4b` for planning/retry planning/judging/JSON tasks and `llama3.2:3b` for final guidance synthesis
 
 ## Agent and Tool Design
 
@@ -66,9 +66,9 @@ Code comments are intentionally placed at behavior boundaries that matter for re
 
 ## Security and Secret Handling
 
-Do not commit API keys, SMTP passwords, JWT secrets, database credentials for real environments, or private model/provider tokens. Local development defaults such as `POSTGRES_PASSWORD=anayaa_dev` are placeholders for single-machine beta use only. Runtime secrets belong in `backend/.env`, deployment environment variables, or a secret manager; `backend/.env` is ignored by git.
+Do not commit API keys, JWT secrets, database credentials for real environments, or private model/provider tokens. Local development defaults such as `POSTGRES_PASSWORD=anayaa_dev` are placeholders for single-machine beta use only. Runtime secrets belong in `backend/.env`, deployment environment variables, or a secret manager; `backend/.env` is ignored by git.
 
-Cloud routing is disabled unless a user explicitly configures a cloud key such as `GEMINI_API_KEY`. Password reset delivery is terminal-only in local mode when SMTP is absent, and `APP_ENV=production` refuses terminal-only password reset delivery.
+Cloud routing is disabled unless a user explicitly configures a cloud key such as `GEMINI_API_KEY`. Password reset delivery is terminal-only for the local-first release.
 
 ## Current Experience
 
@@ -78,7 +78,7 @@ The frontend has three main tabs.
 | --- | --- |
 | Active Pathway | Enter a dilemma and choose interactive or direct guidance |
 | Scripture Center | Browse the local scripture corpus |
-| Eco Audit | View daily energy, CO2, request metrics, and G-Eval audit status |
+| Guidance Audit | View quality checks, grounding checks, and resource impact |
 
 In Active Pathway:
 
@@ -89,7 +89,7 @@ In Active Pathway:
 5. The user can choose `The Interactive Guidance` or `The Guidance`.
 6. `The Interactive Guidance` pauses before synthesis so the user can adjust concepts, select scripture candidates, or add a manual scripture. Clicking `Compile guidance` locks the interactive controls while the final guidance is generated.
 7. `The Guidance` runs the same pipeline directly without the pre-synthesis review pause.
-8. The login page includes `Forgot password?`; the reset form tells users to enter an email that already exists in Anayaa. Reset instructions are emailed when SMTP is configured, or printed to the backend terminal in local mode only.
+8. The login page includes `Forgot password?`; the reset form tells users to enter an email that already exists in Anayaa. Reset instructions are printed to the backend terminal.
 9. Completed guidance can be marked `Helpful` or `Needs work`; the backend persists feedback for future planner tone and summary context.
 10. Browser Back from authenticated tabs logs the user out and returns to the login page.
 11. The UI shows only user-facing guidance. Internal guidance validation details are not shown.
@@ -104,6 +104,20 @@ The visible answer is organized around:
 - Scripture grounding
 - Scripture Evidence
 - Eco and audit metadata
+
+## Screenshots
+
+### Login
+
+![Anayaa login screen](./docs/assets/screenshots/login.png)
+
+### Active Pathway
+
+![Anayaa Active Pathway screen](./docs/assets/screenshots/guidance.png)
+
+### Guidance Audit
+
+![Anayaa Guidance Audit screen](./docs/assets/screenshots/guidance_audit.png)
 
 ## Architecture
 
@@ -184,14 +198,15 @@ New-dilemma queries are standalone. Follow-up mode can send a bounded `previousC
 
 Planner and synthesizer failures are surfaced as explicit workflow statuses instead of silently falling back to deterministic answers. This keeps the system honest when a local model is unavailable, returns invalid JSON, or produces a draft that fails the guidance contract.
 
-## G-Eval Audit
+## Guidance Audit
 
-The G-Eval audit icon represents the automated quality gate for the generated guidance. A response must satisfy the configured minimum score across audit dimensions and pass the grounding contract before it is treated as complete guidance.
+The Guidance Audit represents the automated quality and grounding gate for generated guidance. A response must satisfy the configured minimum score across audit dimensions and pass the grounding contract before it is treated as complete guidance. If retrieval provides exactly one usable citation, Anayaa can still generate limited-grounding guidance from that citation; the audit marks the grounding level as limited, and the semantic cache still requires stronger multi-citation grounding before reusing the answer later.
 
 The UI keeps this user-facing:
 
-- It can show whether the audit passed or needs review.
-- It can show LLM score checks in the audit area.
+- Quality Checks show whether the final guidance and LLM score checks passed.
+- Grounding Checks show whether the answer connected clearly to retrieved scripture evidence.
+- Resource Impact shows approximate daily and per-request local compute metrics, including energy, CO2, cache hit/miss, CPU/GPU estimates, and stage breakdowns when available. These values are transparency estimates, not certified emissions accounting.
 - It does not show the internal Guidance validation block.
 
 ## Repository Layout
@@ -274,6 +289,14 @@ Local URLs after `anayaa serve`:
 - Health: `http://127.0.0.1:8000/api/health`
 - Deep health: `http://127.0.0.1:8000/api/health/deep`
 
+Mobile and demo access stay local-first:
+
+```bash
+anayaa serve --mobile
+```
+
+`serve --mobile` keeps PostgreSQL, Redis, Milvus Lite, embeddings, scripture data, and Ollama models on the computer running Anayaa. It binds the app to the trusted local network and prints a phone URL such as `http://192.168.1.23:8000`.
+
 Read:
 
 - [INSTALL.md](./INSTALL.md) for macOS, Linux, and Windows WSL2 setup.
@@ -322,11 +345,12 @@ Useful product-style commands:
 ```bash
 anayaa doctor
 anayaa release-check
+anayaa serve --mobile
 anayaa stop
 anayaa clean
 ```
 
-`anayaa doctor` checks the local runtime and reports exactly what is missing, including WSL `/mnt/...` installs, CRLF script line endings, and missing executable bits. `anayaa release-check` runs doctor plus compile, backend test, and frontend build checks for a local release candidate. `anayaa stop` stops Anayaa app processes without deleting cached models, local data, or the built frontend. `anayaa clean` delegates to the cleanup script for generated files and optional storage/dependency cleanup.
+`anayaa doctor` checks the local runtime and reports exactly what is missing, including WSL `/mnt/...` installs, CRLF script line endings, and missing executable bits. `anayaa release-check` runs doctor plus compile, backend test, and frontend build checks for a local release candidate. `anayaa serve --mobile` binds the local app to the trusted same-Wi-Fi network and prints a phone URL. `anayaa stop` stops Anayaa app processes without deleting cached models, local data, or the built frontend. `anayaa clean` delegates to the cleanup script for generated files and optional storage/dependency cleanup.
 
 `scripts/start-backend.sh` creates `backend/.env` from `backend/.env.example` when needed, generates a safe local `JWT_SECRET`, checks PostgreSQL and Redis, ensures Ollama models are available, verifies Milvus Lite, seeds empty retrieval data, runs lightweight schema migrations such as user reset columns, and starts FastAPI on port 8000. The built frontend is served by FastAPI from `frontend/dist`.
 
@@ -340,7 +364,6 @@ Milvus seeding is idempotent. If the Milvus collection already has vectors, back
 
 The startup scripts expect these local Ollama models:
 
-- `gemma2:2b`
 - `qwen3:4b`
 - `llama3.2:3b`
 
@@ -348,7 +371,7 @@ Current local model routing:
 
 | Task | Model |
 | --- | --- |
-| Lightweight classification | `gemma2:2b` |
+| JSON/light LLM tasks | `qwen3:4b` |
 | Planner | `qwen3:4b` |
 | ReAct retry planner | `qwen3:4b` |
 | Synthesizer | `llama3.2:3b` |
@@ -371,7 +394,7 @@ The main local settings live in `backend/.env`.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `APP_ENV` | `local` | Runtime mode; `production` requires configured password-reset delivery |
+| `APP_ENV` | `local` | Runtime mode label for local beta behavior |
 | `JWT_SECRET` | generated locally | Required JWT signing secret, at least 32 characters |
 | `JWT_EXP_MINUTES` | `15` | Access token lifetime |
 | `POSTGRES_ENABLED` | `true` | PostgreSQL is required |
@@ -395,14 +418,7 @@ The main local settings live in `backend/.env`.
 | `HITL_ENABLED` | `true` | Enables interactive pre-synthesis checkpoints |
 | `RATE_LIMIT_PER_MINUTE` | `20` | Query rate limit |
 | `SESSION_REFRESH_RATE_LIMIT_PER_MINUTE` | `10` | Token refresh rate limit |
-| `PASSWORD_RESET_BASE_URL` | `http://127.0.0.1:8000` | Base URL used in emailed password-reset links |
-| `SMTP_HOST` | empty | SMTP host for production password reset email |
-| `SMTP_PORT` | `587` | SMTP port |
-| `SMTP_USERNAME` | empty | SMTP login username, if required |
-| `SMTP_PASSWORD` | empty | SMTP login password, if required |
-| `SMTP_FROM` | empty | From address for password-reset email |
-| `SMTP_USE_TLS` | `false` | Use implicit TLS/SMTPS |
-| `SMTP_STARTTLS` | `true` | Upgrade SMTP connection with STARTTLS |
+| `PASSWORD_RESET_BASE_URL` | `http://127.0.0.1:8000` | Base URL used in terminal-printed password-reset links |
 | `PII_NER_ENABLED` | `true` | Enables local named-entity detection for privacy scrubbing |
 | `PII_NER_MODEL` | empty | Optional cached Hugging Face NER model; empty uses the lightweight local recognizer |
 | `PII_NER_LOCAL_FILES_ONLY` | `true` | Loads the optional NER model only from local cache |
@@ -430,7 +446,7 @@ Login users are stored in PostgreSQL. Passwords are never stored in `.env`; the 
 
 When a new email logs in for the first time, Anayaa creates that user with the password entered on the login screen. Later logins for that same email must use the saved password. This is local self-registration; no login credentials are stored in `.env`.
 
-If a user forgets their password, click `Forgot password?` on the login screen and request reset instructions using an email that already exists in Anayaa. The API response remains generic and does not reveal whether the email exists. When the email does exist, Anayaa creates a single-use random reset token, stores only its hash in PostgreSQL, and expires it after 15 minutes. In local mode without SMTP, the backend prints the reset code and link to the local terminal. In production, configure `SMTP_HOST` and `SMTP_FROM` so Anayaa emails the reset code/link; `APP_ENV=production` refuses terminal-only reset delivery.
+If a user forgets their password, click `Forgot password?` on the login screen and request reset instructions using an email that already exists in Anayaa. The API response remains generic and does not reveal whether the email exists. When the email does exist, Anayaa creates a single-use random reset token, stores only its hash in PostgreSQL, expires it after 15 minutes, and prints the reset code and link to the backend terminal.
 
 You can also create or update a local login user from the terminal:
 
@@ -484,7 +500,7 @@ Example query request:
 
 Use `preSynthesisVerification: true` for Interactive Guidance and `false` for direct Guidance. Omit `previousContext` or send an empty list for a new dilemma; send up to three recent scrubbed questions for follow-up mode.
 
-`POST /api/auth/login` self-registers unknown emails with the submitted password. Existing emails require the stored password. `POST /api/auth/password-reset/request` does not reveal whether an email exists; when it does, reset instructions are delivered by configured SMTP email or, in local mode only, printed to the backend terminal.
+`POST /api/auth/login` self-registers unknown emails with the submitted password. Existing emails require the stored password. `POST /api/auth/password-reset/request` does not reveal whether an email exists; when it does, reset instructions are printed to the backend terminal.
 
 Important response fields include:
 
@@ -592,3 +608,5 @@ Review a single request path quickly by logging in, sending a query to `/api/que
 - `auditScores`
 - `auditScores.groundingContract`
 - `cacheHit`
+
+

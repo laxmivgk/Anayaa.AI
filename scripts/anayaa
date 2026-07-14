@@ -54,11 +54,13 @@ Commands:
 Serve options:
   --offline         Force OFFLINE_MODE=true for cached local runtime
   --online          Force OFFLINE_MODE=false; may install/pull if assets are missing
+  --mobile, --lan   Bind to 0.0.0.0 and print the same-Wi-Fi phone URL
   --reload          Start FastAPI with reload for development
 
 Examples:
   ${CLI_CMD} setup
   ${CLI_CMD} serve
+  ${CLI_CMD} serve --mobile
   ${CLI_CMD} serve --online
   ${CLI_CMD} doctor
   ${CLI_CMD} release-check
@@ -140,6 +142,49 @@ try:
 except Exception:
     sys.exit(1)
 PY
+}
+
+detect_lan_ip() {
+  local ip_addr=""
+
+  if [[ "$(uname -s)" == "Darwin" ]] && command -v ipconfig >/dev/null 2>&1; then
+    ip_addr="$(ipconfig getifaddr en0 2>/dev/null || true)"
+    if [[ -z "$ip_addr" ]]; then
+      ip_addr="$(ipconfig getifaddr en1 2>/dev/null || true)"
+    fi
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v hostname >/dev/null 2>&1; then
+    ip_addr="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v ip >/dev/null 2>&1; then
+    ip_addr="$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1; i<=NF; i++) if ($i == "src") {print $(i+1); exit}}' || true)"
+  fi
+
+  if [[ -z "$ip_addr" ]] && command -v ifconfig >/dev/null 2>&1; then
+    ip_addr="$(ifconfig 2>/dev/null | awk '/inet / && $2 != "127.0.0.1" {print $2; exit}' || true)"
+  fi
+
+  printf '%s' "$ip_addr"
+}
+
+print_mobile_access_note() {
+  local port="${ANAYAA_PORT:-8000}"
+  local lan_ip
+  lan_ip="$(detect_lan_ip)"
+
+  log "Mobile/LAN mode enabled. Keep the phone and this computer on the same trusted Wi-Fi."
+  log "Computer URL: http://127.0.0.1:${port}"
+  if [[ -n "$lan_ip" ]]; then
+    log "Phone URL: http://${lan_ip}:${port}"
+    log "Do not open http://0.0.0.0:${port}; 0.0.0.0 is only the server bind address."
+    log "If terminal-printed password-reset links must open on the phone, restart with:"
+    log "  PASSWORD_RESET_BASE_URL=http://${lan_ip}:${port} ${CLI_CMD} serve --mobile"
+  else
+    warn "Could not detect the Wi-Fi IP automatically."
+    warn "Find this computer's LAN IP, then open http://<computer-ip>:${port} on the phone."
+  fi
 }
 
 wait_for_postgres() {
@@ -282,12 +327,14 @@ cmd_setup() {
 
 cmd_serve() {
   local reload=false
+  local mobile=false
   load_env_if_present
 
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
       --offline) export OFFLINE_MODE=true ;;
       --online) export OFFLINE_MODE=false ;;
+      --mobile|--lan) mobile=true ;;
       --reload) reload=true ;;
       --help) usage; exit 0 ;;
       *) echo "[anayaa] Unknown serve option: $1" >&2; usage; exit 1 ;;
@@ -295,7 +342,11 @@ cmd_serve() {
     shift
   done
 
-  export ANAYAA_HOST="${ANAYAA_HOST:-127.0.0.1}"
+  if [[ "$mobile" == true ]]; then
+    export ANAYAA_HOST="0.0.0.0"
+  else
+    export ANAYAA_HOST="${ANAYAA_HOST:-127.0.0.1}"
+  fi
   export ANAYAA_PORT="${ANAYAA_PORT:-8000}"
   if [[ "$reload" == true ]]; then
     export ANAYAA_RELOAD=true
@@ -306,7 +357,12 @@ cmd_serve() {
   # The first beta support issue was missing frontend/dist; keep this repair
   # path explicit so users know when setup is required.
   build_frontend_if_possible
-  log "Serving Anayaa locally. Open http://${ANAYAA_HOST}:${ANAYAA_PORT}"
+  if [[ "$mobile" == true ]]; then
+    log "Serving Anayaa on the trusted local network."
+    print_mobile_access_note
+  else
+    log "Serving Anayaa locally. Open http://${ANAYAA_HOST}:${ANAYAA_PORT}"
+  fi
   exec "$ROOT/scripts/start-backend.sh"
 }
 
@@ -426,7 +482,7 @@ PY
 
 check_ollama() {
   local base_url="${OLLAMA_BASE_URL:-http://127.0.0.1:11434}"
-  local models=(gemma2:2b qwen3:4b llama3.2:3b)
+  local models=(qwen3:4b llama3.2:3b)
   check_command "Ollama CLI" "ollama"
 
   if command -v curl >/dev/null 2>&1 && curl -sf "${base_url}/api/tags" >/dev/null 2>&1; then

@@ -2,11 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from app.api.deps import require_auth
-from app.auth.email_delivery import (
-    PasswordResetDeliveryUnavailable,
-    deliver_password_reset,
-    password_reset_delivery_configured,
-)
+from app.auth.email_delivery import deliver_password_reset
 from app.auth.identity import verify_identity
 from app.auth.jwt import create_access_token, user_history_key
 from app.auth.session import SessionManager
@@ -77,20 +73,13 @@ async def request_password_reset(body: PasswordResetRequestBody, request: Reques
 
     pg = request.app.state.pg
     settings = get_settings()
-    if not password_reset_delivery_configured(settings):
-        raise HTTPException(status_code=503, detail="Password reset delivery is not configured.")
-
     reset_code = await create_password_reset_code(pg, email)
     if reset_code:
-        try:
-            deliver_password_reset(email, reset_code, settings)
-        except PasswordResetDeliveryUnavailable as exc:
-            raise HTTPException(status_code=503, detail="Could not send password reset instructions.") from exc
+        deliver_password_reset(email, reset_code, settings)
 
-    delivery = "email" if settings.smtp_host and settings.smtp_from else "the backend terminal"
     return {
         "success": True,
-        "message": f"If this email exists, password reset instructions were sent to {delivery}.",
+        "message": "If this email exists, password reset instructions were sent to the backend terminal.",
     }
 
 

@@ -53,7 +53,9 @@ PROMPT_ECHO_LINE_RE = re.compile(
     r"^(?:"
     r"Dilemma:|"
     r"Must stay focused on these user-topic words:|"
+    r"User-topic words:|"
     r"Tone mode:|"
+    r"Relationship context:|"
     r"Retrieved scriptures:|"
     r"Citation anchors:|"
     r"\d+\.\s*\[[^\]]+\]\s+.+|"
@@ -74,7 +76,7 @@ PROMPT_ECHO_LINE_RE = re.compile(
     r"Judgement:\s*say what choice\b|"
     r"Judgment:\s*say what choice\b|"
     r"Next step:\s*give one concrete\b|"
-    r"Scripture grounding:\s*write 2 plain sentences\b"
+    r"Scripture grounding:\s*write (?:1-2|2) plain sentences\b"
     r")",
     re.I,
 )
@@ -85,7 +87,7 @@ PROMPT_LIKE_RESPONSE_RE = re.compile(
     r"dharma question about|"
     r"retrieved scriptures point toward|"
     r"use the citations as a boundary|"
-    r"write 2 plain sentences"
+    r"write (?:1-2|2) plain sentences"
     r")\b",
     re.I,
 )
@@ -121,6 +123,71 @@ RELATIONSHIP_DRIFT_PATTERNS = {
     "sibling": re.compile(r"\b(?:your|my|their|the user's)\s+(?:brother|sister|sibling)\b", re.I),
     "child": re.compile(r"\b(?:your|my|their|the user's)\s+(?:son|daughter|child|kid)\b", re.I),
 }
+
+SYNTHESIS_SYSTEM_PROMPT = (
+    "You are Anayaa, a calm and practical moral guide. "
+    "Give a clear answer for the user's real situation before offering reflection. "
+    "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
+    "Use only the dynamic dilemma and retrieved scripture text as evidence. "
+    "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
+    "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
+    "Write exactly these 5 labeled sections, 210 words or fewer total. "
+    "Use simple everyday words. Each title must be visible at the start of its own line: "
+    "One-line summary: answer the dilemma directly in one compact sentence. "
+    "Reflection: explain the feeling or conflict in simple words, without blaming the user. "
+    "Judgement: say what choice seems wisest and kindest, without naming scripture sources, chapters, verses, or citation labels. "
+    "Next step: give a useful small sequence the user can take today: one concrete action, one preparation detail, "
+    "and one calm follow-through if the other person does not listen or the situation does not improve. "
+    "Do not make the whole Next step only writing, documenting, or gathering evidence; use notes only to support "
+    "a real-world conversation, boundary, repair, protection, or ethical choice. "
+    "For business, money, workplace, or unfair-treatment dilemmas, include a specific constructive conversation "
+    "or accountability move plus a brief fact-recording/protection detail when useful. "
+    "Scripture grounding: write 1-2 plain sentences explaining how the retrieved scripture supports the advice; "
+    "name every exact source from Citation anchors and reuse at least one anchor keyword from each. "
+    "When two or more citations are available, name at least two exact sources. "
+    "Keep scripture names, chapter numbers, verse numbers, and citation labels only in Scripture grounding; "
+    "do not put them in One-line summary, Reflection, Judgement, or Next step. "
+    "In Scripture grounding, never mix sources: if a sentence quotes or references Romans, the sentence subject must be "
+    "Romans or Holy Bible, not Bhagavad Gita, Dhammapada, Quran, or another scripture. "
+    "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general. "
+    "Use the relationship context from the dynamic input: if no specific role is confirmed, use neutral wording like "
+    "the other person or them; do not invent mom, parent, spouse, manager, or friend. If confirmed roles are listed, "
+    "use only those confirmed roles or neutral wording, and do not change one relationship into another. "
+    "If a private name was redacted, never print [NAME_REDACTED] in final guidance. "
+    "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words provided. "
+    "For caregiver-burnout questions involving parent care plus exhaustion, hopelessness, or giving up, treat exhaustion, "
+    "hopelessness, and 'giving up' as the urgent center. The Next step must not start with business finances, debt tracking, "
+    "saving money, or productivity. The Next step should tell the user to contact one real person today, say they are burned "
+    "out and cannot carry this alone, and ask for one concrete relief action such as parent-care coverage, a meal, a ride, "
+    "or help calling a doctor, social worker, or respite resource. If the user may harm themselves or cannot stay safe, "
+    "tell them to contact local emergency or crisis support now. Keep business decisions secondary until immediate support "
+    "and rest are in place. "
+    "For betrayal, lies, anger, or revenge questions, make the Next step calm and proportionate. The One-line summary should "
+    "say not to seek revenge, to protect yourself with truth and boundaries, and that forgiveness can be a later process; "
+    "do not frame protection as the opposite of forgiveness. Do not say the user should choose lawful protection rather than "
+    "trying to forgive. Do not use the phrase lawful protection for ordinary lies or betrayal; say truth and calm boundaries instead. "
+    "Tell the user not to retaliate today, to speak once calmly when safe, name the hurt or concern clearly, and give the other person "
+    "a real chance to respond. If they do not listen, tell the user to stop repeating the argument, set a clear boundary, "
+    "and note key facts only if it helps protect truth or prevent further harm. Do not make law enforcement or authority escalation the default first step. "
+    "Mention a trusted person or appropriate authority only if the lies affect safety, work, school, housing, or reputation; "
+    "mention emergency support only for threats, stalking, or immediate danger. Do not mention legal action unless the user "
+    "describes a concrete legal threat, safety threat, stalking, workplace/school action, or serious reputation harm. "
+    "For dropshipping or business-model scam questions, answer directly whether the business model is automatically wrong: "
+    "say it is not automatically scamming, but it becomes unethical if it hides risk, misleads customers, uses unreliable "
+    "fulfillment, conceals delays, refuses fair refunds, or avoids accountability. Do not assume the user has invested money, "
+    "suffered losses, or already started the business. Do not name specific commercial platforms, tools, or companies unless "
+    "the user named them. "
+    "For other business-integrity questions, answer the user's exact wealth-versus-integrity conflict directly: say that "
+    "pursuing wealth is not wrong by itself, but pursuing wealth at the cost of honesty, fairness, lawful conduct, or integrity "
+    "is not wise. Do not turn the question into dropshipping, scamming, or a specific business model unless the user named one. "
+    "Keep the practical step focused on identifying the exact corner the user feels tempted to cut and choosing an ethical alternative. "
+    "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally. "
+    "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'. "
+    "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', 'right intention', "
+    "'moral pathway', and 'may this guidance inspire you'. "
+    "The user's message contains the dynamic payload at the end: user dilemma, topic words, tone, relationship context, "
+    "retrieved citations, and citation anchors."
+)
 
 
 def _active_ollama_warmup_models() -> list[str]:
@@ -182,15 +249,7 @@ async def generate_moral_pathway(
     safe_dilemma = normalize_harmful_framing_text(visible_dilemma)
     prompt = _build_synthesis_prompt(safe_dilemma, citations, tone_msg)
     started = time.perf_counter()
-    system_message = (
-        "You are Anayaa, a calm and practical moral guide. "
-        "Give a clear answer for the user's real situation before offering reflection. "
-        "Stay human, specific, and useful; avoid sounding academic, mystical, or sermon-like. "
-        "Use only the user's dilemma and the retrieved scripture text as evidence. "
-        "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
-        "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
-        "Do not use markdown, bullet points, or numbered lists."
-    )
+    system_message = SYNTHESIS_SYSTEM_PROMPT
     synthesis_options = {"temperature": 0.0, "num_predict": 520, "num_ctx": 2048}
 
     try:
@@ -223,11 +282,23 @@ async def generate_moral_pathway(
             if rejection_reason:
                 retry_reason = rejection_reason
                 if _should_retry_synthesis_rejection(rejection_reason):
-                    retry_prompt = (
-                        f"{prompt}\n\n"
+                    caregiver_retry_instruction = ""
+                    if _is_caregiver_burnout_dilemma(safe_dilemma):
+                        caregiver_retry_instruction = (
+                            "This is a caregiver-burnout and hopelessness query. The answer must explicitly center "
+                            "burnout, exhaustion, or hopelessness; tell the user to contact one real person today; "
+                            "ask for one concrete relief action such as care coverage, a meal, a ride, or help calling "
+                            "a doctor, social worker, or respite resource; and include a safety line such as contacting "
+                            "emergency or crisis support now if they may harm themselves or cannot stay safe. "
+                            "Keep business decisions secondary until support and rest are in place. "
+                        )
+                    retry_system_message = (
+                        f"{system_message} "
                         "Your previous draft was incomplete or not visibly grounded. Regenerate the full answer now. "
                         "You must include all 5 labels exactly once, and the final label must be "
-                        "Scripture grounding: with two named retrieved sources and their anchor keywords. "
+                        "Scripture grounding: with the retrieved source names and their anchor keywords. "
+                        f"{caregiver_retry_instruction}"
+                        "Do not mention scripture sources, chapters, verses, or citation labels before Scripture grounding. "
                         "Do not attach a quote, chapter, or verse reference from one scripture to a different scripture source."
                     )
                     retry_response = await client.post(
@@ -235,8 +306,8 @@ async def generate_moral_pathway(
                         json={
                             "model": model,
                             "messages": [
-                                {"role": "system", "content": system_message},
-                                {"role": "user", "content": retry_prompt},
+                                {"role": "system", "content": retry_system_message},
+                                {"role": "user", "content": prompt},
                             ],
                             "stream": False,
                             "think": False,
@@ -307,88 +378,37 @@ def _build_synthesis_prompt(
             for keyword in citation.get("keywords", [])[:4]
             if str(keyword).strip()
         ]
+        citation_label = _citation_reference_label(citation)
         citation_lines.append(
-            f"{idx}. [{citation.get('faith')}] {citation.get('source')} "
-            f"{citation.get('chapter')}:{citation.get('verse')} — "
+            f"{idx}. [{citation.get('faith')}] {citation_label} — "
             f"\"{citation.get('translation')}\""
         )
         anchor_lines.append(
-            f"{idx}. {citation.get('source')} {citation.get('chapter')}:{citation.get('verse')} "
-            f"anchors: {', '.join(keywords) if keywords else citation.get('source')}"
+            f"{idx}. {citation_label} anchors: {', '.join(keywords) if keywords else citation.get('source')}"
         )
     citations_block = "\n".join(citation_lines)
     anchors_block = "\n".join(anchor_lines)
     tone = tone_msg or "Balanced guidance mode"
     focus_terms = _query_focus_terms(dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
-    relationship_instruction = _relationship_role_instruction(dilemma)
-    caregiver_burnout_instruction = ""
-    if _is_caregiver_burnout_dilemma(dilemma):
-        caregiver_burnout_instruction = (
-            "For this caregiver-burnout question, treat exhaustion, hopelessness, and 'giving up' as the urgent center. "
-            "The Next step must not start with business finances, debt tracking, saving money, or productivity. "
-            "The Next step should tell the user to contact one real person today, say they are burned out and cannot carry this alone, "
-            "and ask for one concrete relief action such as parent-care coverage, a meal, a ride, or help calling a doctor, social worker, or respite resource. "
-            "If the user may harm themselves or cannot stay safe, tell them to contact local emergency or crisis support now. "
-            "Keep business decisions secondary until the user has immediate support and rest.\n"
-        )
-    betrayal_revenge_instruction = ""
-    if _is_betrayal_revenge_dilemma(dilemma):
-        betrayal_revenge_instruction = (
-            "For this betrayal, lies, anger, or revenge question, make the Next step calm and proportionate. "
-            "The One-line summary should say not to seek revenge, to protect yourself with truth and boundaries, "
-            "and that forgiveness can be a later process; do not frame protection as the opposite of forgiveness. "
-            "Do not say the user should choose lawful protection rather than trying to forgive. "
-            "Do not use the phrase lawful protection for ordinary lies or betrayal; say truth and calm boundaries instead. "
-            "Tell the user not to retaliate today, to write down what was said, when it happened, who heard it, "
-            "and what evidence exists, and to limit contact if it prevents further harm. "
-            "Do not make law enforcement or authority escalation the default first step. Mention a trusted person or appropriate authority "
-            "only if the lies affect safety, work, school, housing, or reputation; mention emergency support only for threats, stalking, or immediate danger. "
-            "Do not mention legal action unless the user describes a concrete legal threat, safety threat, stalking, workplace/school action, or serious reputation harm.\n"
-        )
-    business_integrity_instruction = ""
-    if _is_dropshipping_scam_dilemma(dilemma):
-        business_integrity_instruction = (
-            "For this business-integrity question, answer directly whether the business model is automatically wrong: "
-            "say it is not automatically scamming, but it becomes unethical if it hides risk, misleads customers, "
-            "uses unreliable fulfillment, conceals delays, refuses fair refunds, or avoids accountability. "
-            "Do not assume the user has invested money, suffered losses, or already started the business. "
-            "Do not name specific commercial platforms, tools, or companies unless the user named them.\n"
-        )
-    elif _is_business_integrity_dilemma(dilemma):
-        business_integrity_instruction = (
-            "For this business-integrity question, answer the user's exact wealth-versus-integrity conflict directly: "
-            "say that pursuing wealth is not wrong by itself, but pursuing wealth at the cost of honesty, fairness, "
-            "lawful conduct, or integrity is not wise. Do not turn the question into dropshipping, scamming, or a specific "
-            "business model unless the user named one. Keep the practical step focused on identifying the exact corner "
-            "the user feels tempted to cut and choosing an ethical alternative.\n"
-        )
+    relationship_context = _relationship_role_context(dilemma)
     return (
         f"Dilemma:\n{dilemma}\n\n"
-        f"Must stay focused on these user-topic words:\n{focus_block}\n\n"
+        f"User-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
+        f"Relationship context: {relationship_context}\n\n"
         f"Retrieved scriptures:\n{citations_block}\n\n"
-        f"Citation anchors:\n{anchors_block}\n\n"
-        "Write exactly these 5 labeled sections, 180 words or fewer total.\n"
-        "Use simple everyday words. Each title must be visible at the start of its own line:\n"
-        "One-line summary: answer the dilemma directly in one compact sentence.\n"
-        "Reflection: explain the feeling or conflict in simple words, without blaming the user.\n"
-        "Judgement: say what choice seems wisest and kindest.\n"
-        "Next step: give one concrete, stable action the user can take today; include both a fact-recording step and a practical protection step when the dilemma involves business or money.\n"
-        "Scripture grounding: write 2 plain sentences explaining how at least two retrieved scriptures support the advice; name two exact sources from Citation anchors and reuse at least one anchor keyword from each.\n"
-        "In Scripture grounding, never mix sources: if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible, not Bhagavad Gita, Dhammapada, Quran, or another scripture.\n"
-        "Only make claims supported by the dilemma or retrieved scriptures. If a detail is not given, keep the wording general.\n"
-        f"{relationship_instruction}\n"
-        "If a private name was redacted, never print [NAME_REDACTED] in final guidance.\n"
-        "For one-word, fragmentary, or broad questions, do not invent a scenario; answer the dharma meaning of the words the user provided.\n"
-        f"{caregiver_burnout_instruction}"
-        f"{betrayal_revenge_instruction}"
-        f"{business_integrity_instruction}"
-        "The Summary must clearly address the user's actual dilemma and should reuse at least one user-topic word naturally.\n"
-        "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'.\n"
-        "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', "
-        "'right intention', 'moral pathway', and 'may this guidance inspire you'."
+        f"Citation anchors:\n{anchors_block}"
     )
+
+
+def _citation_reference_label(citation: dict[str, Any]) -> str:
+    parts = [
+        str(citation.get("source") or "").strip(),
+        str(citation.get("chapter") or "").strip(),
+        str(citation.get("verse") or "").strip(),
+    ]
+    return ", ".join(part for part in parts if part) or "retrieved scripture"
 
 
 def _clean_synthesis_output(pathway: str) -> str:
@@ -586,20 +606,13 @@ def _relationship_role_groups(dilemma: str) -> set[str]:
     return groups
 
 
-def _relationship_role_instruction(dilemma: str) -> str:
+def _relationship_role_context(dilemma: str) -> str:
     groups = _relationship_role_groups(dilemma)
     if not groups:
-        return (
-            "No specific relationship role is confirmed. If a private name was redacted, "
-            "use neutral wording like the other person or them; do not invent mom, parent, spouse, manager, or friend."
-        )
+        return "No specific relationship role is confirmed."
 
     allowed = ", ".join(RELATIONSHIP_ROLE_DISPLAY[group] for group in sorted(groups))
-    return (
-        f"Known relationship roles from the dilemma: {allowed}. "
-        "If a private name was redacted, use only these confirmed roles or neutral wording like the other person/them. "
-        "Do not change one relationship into another; for example, do not change a friend into a mom, parent, spouse, manager, or coworker."
-    )
+    return f"Known relationship roles from the dilemma: {allowed}."
 
 
 def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
@@ -610,6 +623,8 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
         required_matches = 1 if len(focus_terms) <= 2 else 2
         if len(matches) < required_matches and not (
             _is_betrayal_revenge_dilemma(dilemma) and _is_betrayal_revenge_pathway_relevant(pathway)
+        ) and not (
+            _is_caregiver_burnout_dilemma(dilemma) and _is_caregiver_burnout_pathway_relevant(pathway)
         ):
             return False
 
@@ -626,7 +641,65 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
 
     if not citation_terms or any(term in pathway_lower for term in citation_terms[:8]):
         return True
+    if _is_caregiver_burnout_dilemma(dilemma) and _is_caregiver_burnout_pathway_relevant(pathway):
+        return True
     return _is_betrayal_revenge_dilemma(dilemma) and _betrayal_revenge_citation_grounded(citations, pathway)
+
+
+def _is_caregiver_burnout_pathway_relevant(pathway: str) -> bool:
+    lower = pathway.lower()
+    burnout_terms = {
+        "burned out",
+        "burnt out",
+        "burnout",
+        "hopeless",
+        "exhausted",
+        "giving up",
+        "cannot carry",
+        "can't carry",
+        "overwhelmed",
+        "despair",
+        "too much",
+        "worn down",
+    }
+    support_terms = {
+        "contact",
+        "call",
+        "trusted",
+        "person",
+        "someone",
+        "friend",
+        "family",
+        "relative",
+        "neighbor",
+        "support",
+        "relief",
+        "cover",
+        "coverage",
+        "meal",
+        "ride",
+        "doctor",
+        "social worker",
+        "respite",
+        "rest",
+    }
+    safety_terms = {
+        "safe",
+        "safety",
+        "harm",
+        "hurt yourself",
+        "at risk",
+        "risk of",
+        "emergency",
+        "crisis",
+        "988",
+        "lifeline",
+    }
+    return (
+        any(term in lower for term in burnout_terms)
+        and any(term in lower for term in support_terms)
+        and any(term in lower for term in safety_terms)
+    )
 
 
 def _is_betrayal_revenge_pathway_relevant(pathway: str) -> bool:
@@ -734,6 +807,25 @@ def _scripture_source_mismatches(citations: list[dict[str, Any]], pathway: str) 
             mismatches.append(f"{attributed}->{reference_owner}")
 
     return mismatches[:4]
+
+
+def _scripture_reference_outside_grounding(citations: list[dict[str, Any]], pathway: str) -> bool:
+    outside = _normalized_text(_pathway_without_scripture_grounding(pathway))
+    if not outside:
+        return False
+    for citation in citations:
+        if _contains_any_source_alias(outside, _source_aliases(citation)):
+            return True
+    return False
+
+
+def _pathway_without_scripture_grounding(pathway: str) -> str:
+    return re.sub(
+        r"(?:^|[\n.]\s*)scripture grounding\s*:\s*.*?(?=(?:\n|$)\s*(?:one[- ]line summary|summary|reflection|judg(?:e)?ment|next step)\s*:|\Z)",
+        " ",
+        str(pathway or ""),
+        flags=re.I | re.S,
+    )
 
 
 def _scripture_grounding_text(pathway: str) -> str:
@@ -856,6 +948,8 @@ def _synthesis_rejection_reason(dilemma: str, citations: list[dict[str, Any]], p
         return "missing_summary_section"
     if not re.search(r"(?:^|[\n.]\s*)scripture grounding\s*:\s*\S+", pathway, re.I | re.M):
         return "missing_scripture_grounding_section"
+    if _scripture_reference_outside_grounding(citations, pathway):
+        return "scripture_reference_outside_grounding"
     if _scripture_source_mismatches(citations, pathway):
         return "scripture_source_mismatch"
     if _unsupported_relationship_drift(dilemma, pathway):
@@ -872,6 +966,7 @@ def _should_retry_synthesis_rejection(reason: str) -> bool:
         "missing_scripture_grounding_section",
         "summary_not_relevant_to_query",
         "scripture_source_mismatch",
+        "scripture_reference_outside_grounding",
     }
 
 

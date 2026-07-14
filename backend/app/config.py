@@ -60,13 +60,6 @@ class Settings(BaseSettings):
     turns_retention_days: int = 30
     retention_cleanup_interval_seconds: int = 86400
     password_reset_base_url: str = "http://127.0.0.1:8000"
-    smtp_host: str = ""
-    smtp_port: int = 587
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_from: str = ""
-    smtp_use_tls: bool = False
-    smtp_starttls: bool = True
 
     @field_validator("jwt_secret")
     @classmethod

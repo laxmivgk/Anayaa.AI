@@ -5,7 +5,6 @@ from pydantic import ValidationError
 
 from app.api.routes.auth import LoginBody, PasswordResetConfirmBody, PasswordResetRequestBody
 from app.auth.email_delivery import (
-    PasswordResetDeliveryUnavailable,
     build_password_reset_link,
     deliver_password_reset,
 )
@@ -227,24 +226,10 @@ def test_password_reset_link_contains_email_and_server_side_token():
     assert link == "https://anayaa.example.com/?resetEmail=tester%40example.com&resetCode=reset-token"
 
 
-def test_production_password_reset_requires_email_delivery():
-    settings = Settings(
-        JWT_SECRET="x" * 32,
-        app_env="production",
-        smtp_host="",
-        smtp_from="",
-    )
-
-    with pytest.raises(PasswordResetDeliveryUnavailable):
-        deliver_password_reset("tester@example.com", "reset-token", settings)
-
-
-def test_local_password_reset_can_fall_back_to_terminal(capsys):
+def test_password_reset_prints_terminal_instructions(capsys):
     settings = Settings(
         JWT_SECRET="x" * 32,
         app_env="local",
-        smtp_host="",
-        smtp_from="",
     )
 
     assert deliver_password_reset("tester@example.com", "reset-token", settings) == "terminal"
@@ -252,75 +237,3 @@ def test_local_password_reset_can_fall_back_to_terminal(capsys):
     output = capsys.readouterr().out
     assert "Password reset code for tester@example.com: reset-token" in output
     assert "resetEmail=tester%40example.com" in output
-
-
-def test_local_password_reset_falls_back_to_terminal_when_smtp_unavailable(monkeypatch, capsys):
-    class UnavailableSmtp:
-        def __init__(self, *args, **kwargs):
-            raise OSError("mail catcher is not running")
-
-    monkeypatch.setattr("app.auth.email_delivery.smtplib.SMTP", UnavailableSmtp)
-    settings = Settings(
-        JWT_SECRET="x" * 32,
-        app_env="local",
-        smtp_host="127.0.0.1",
-        smtp_port=1025,
-        smtp_from="no-reply@anayaa.local",
-        smtp_starttls=False,
-    )
-
-    assert deliver_password_reset("tester@example.com", "reset-token", settings) == "terminal"
-
-    output = capsys.readouterr().out
-    assert "Password reset code for tester@example.com: reset-token" in output
-
-
-def test_password_reset_email_delivery_uses_smtp(monkeypatch):
-    sent_messages = []
-
-    class FakeSmtp:
-        def __init__(self, host, port, timeout):
-            self.host = host
-            self.port = port
-            self.timeout = timeout
-            self.started_tls = False
-            self.logged_in = None
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def starttls(self):
-            self.started_tls = True
-
-        def login(self, username, password):
-            self.logged_in = (username, password)
-
-        def send_message(self, message):
-            sent_messages.append((self, message))
-
-    monkeypatch.setattr("app.auth.email_delivery.smtplib.SMTP", FakeSmtp)
-    settings = Settings(
-        JWT_SECRET="x" * 32,
-        smtp_host="smtp.example.com",
-        smtp_port=2525,
-        smtp_from="no-reply@anayaa.example.com",
-        smtp_username="mailer",
-        smtp_password="secret",
-        smtp_starttls=True,
-        password_reset_base_url="https://anayaa.example.com",
-    )
-
-    assert deliver_password_reset("tester@example.com", "reset-token", settings) == "email"
-
-    smtp, message = sent_messages[0]
-    assert smtp.host == "smtp.example.com"
-    assert smtp.port == 2525
-    assert smtp.started_tls is True
-    assert smtp.logged_in == ("mailer", "secret")
-    assert message["To"] == "tester@example.com"
-    assert message["From"] == "no-reply@anayaa.example.com"
-    assert "reset-token" in message.get_content()
-    assert "https://anayaa.example.com/?resetEmail=tester%40example.com&resetCode=reset-token" in message.get_content()
