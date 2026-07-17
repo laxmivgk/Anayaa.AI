@@ -55,6 +55,33 @@ def test_parse_retry_plan_response_accepts_retry_plan():
     assert plan["reason"] == "Retry with focused retrieval."
 
 
+def test_parse_retry_plan_response_repairs_common_qwen_json_drift():
+    plan = _parse_retry_plan_response(
+        """
+        ```json
+        {
+          action: "retry",
+          retryQuery: "friend truth compassion grounding",
+          focusKeywords: ["friend", "truth", "compassion",],
+        ```
+        """
+    )
+
+    assert plan["action"] == "retry"
+    assert plan["retryQuery"] == "friend truth compassion grounding"
+    assert plan["focusKeywords"] == ["friend", "truth", "compassion"]
+
+
+def test_parse_retry_plan_response_repairs_truncated_closing_brace():
+    plan = _parse_retry_plan_response(
+        '{"action":"retry","retryQuery":"weather context moral relevance","focusKeywords":["weather","context"]'
+    )
+
+    assert plan["action"] == "retry"
+    assert plan["retryQuery"] == "weather context moral relevance"
+    assert plan["focusKeywords"] == ["weather", "context"]
+
+
 def test_parse_retry_plan_response_rejects_retry_without_query():
     with pytest.raises(ValueError, match="retryQuery"):
         _parse_retry_plan_response(

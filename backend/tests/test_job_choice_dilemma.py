@@ -266,6 +266,19 @@ def test_job_choice_query_preserves_livelihood_keywords_after_dharma_frame():
     assert "provided" not in keywords
 
 
+def test_grudge_explanation_query_preserves_forgiveness_retrieval_terms():
+    query = "Why is it so hard for people to let go of old grudges?"
+    rewritten = rewrite_malformed_query(query)["rewrittenQuery"]
+    keywords = _extract_planner_keywords(rewritten)
+    candidates = _planner_candidate_terms(query, rewritten)
+
+    assert "people" not in keywords
+    assert "grudge" in keywords
+    assert "forgiveness" in candidates
+    assert "resentment" in candidates
+    assert "hatred" in candidates
+
+
 def test_parent_gift_affection_query_preserves_family_boundary_keywords():
     scrubbed = scrub_pii(
         "My mom Sita wants to see me just to get her new clothes. "
@@ -361,7 +374,7 @@ def test_job_choice_synthesis_prompt_does_not_expose_internal_dharma_frame():
         "",
     )
 
-    dilemma_section = prompt.split("Dilemma:\n", 1)[1].split("\n\n", 1)[0]
+    dilemma_section = prompt.split("Compact dilemma:\n", 1)[1].split("\n\n", 1)[0]
     assert "I am asking a dharma dilemma" not in dilemma_section
     assert "job" in dilemma_section
     assert "needs" in dilemma_section

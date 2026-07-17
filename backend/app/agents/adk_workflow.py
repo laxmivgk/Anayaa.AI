@@ -33,6 +33,7 @@ from app.agents.workflow import (
 from app.config import get_settings
 from app.eco.tracker import EcoTracker
 from app.llm.generator import generate_moral_pathway
+from app.llm.json_repair import extract_json_object
 from app.llm.router import select_model
 from app.mcp.client import retrieve_via_mcp
 from app.memory.redis_cache import RedisCache
@@ -41,6 +42,7 @@ from app.observability.g_eval_judge import run_g_eval_judge
 from app.observability.guidance_reasons import build_guidance_reasons
 from app.observability.latency import AgentLatencyTracker
 from app.observability.plan_trace import persist_request_plan_trace
+from app.retrieval.embeddings import get_embedder
 
 logger = logging.getLogger(__name__)
 
@@ -68,8 +70,15 @@ QUERY_STOPWORDS = {
     "about",
     "after",
     "again",
+    "and",
     "because",
+    "can",
     "could",
+    "for",
+    "from",
+    "into",
+    "that",
+    "the",
     "their",
     "there",
     "these",
@@ -89,58 +98,86 @@ QUERY_STOPWORDS = {
     "feel",
     "help",
     "handle",
+    "how",
     "wants",
     "without",
     "ensuring",
+    "explain",
+    "simple",
+    "words",
+    "word",
+    "today",
+    "tomorrow",
+    "okay",
+    "our",
+    "people",
+    "them",
 }
 
-SCRIPTURE_BRIDGES = {
-    "betray": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
-    "betrayed": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
-    "betrayal": {"betrayal", "retaliation", "forgiveness", "revenge", "patience", "anger"},
-    "business": {"business", "fairness", "justice", "integrity", "wealth", "duty", "work"},
-    "company": {"business", "wealth", "work", "duty", "responsibility", "hardship", "failure"},
-    "affection": {"love", "compassion", "goodwill", "relationship", "trust"},
-    "dropshipping": {"business", "integrity", "honesty", "wealth", "fairness", "responsibility"},
-    "family": {"family", "parent", "mother", "care", "compassion", "love", "responsibility"},
-    "father": {"family", "parent", "care", "compassion", "love", "responsibility"},
-    "financial": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
-    "financially": {"wealth", "greed", "business", "duty", "work", "hardship", "contentment"},
-    "friend": {"friend", "goodwill", "love", "compassion", "trust"},
-    "gift": {"gift", "gifts", "contentment", "simplicity", "wealth", "trust", "relationship"},
-    "love": {"love", "compassion", "goodwill", "relationship", "trust"},
-    "lied": {"truth", "honesty", "falsehood", "speech"},
-    "lie": {"truth", "honesty", "falsehood", "speech"},
-    "lying": {"truth", "honesty", "falsehood", "speech"},
-    "mom": {"family", "parent", "mother", "care", "compassion", "love", "responsibility"},
-    "mother": {"family", "parent", "mother", "care", "compassion", "love", "responsibility"},
-    "forgive": {"forgiveness", "mercy", "compassion", "peace"},
-    "forgiveness": {"forgiveness", "mercy", "compassion", "peace"},
-    "angry": {"anger", "peace", "patience", "restraint"},
-    "anger": {"anger", "peace", "patience", "restraint"},
-    "anxious": {"anxiety", "worry", "peace", "trust"},
-    "anxiety": {"anxiety", "worry", "peace", "trust"},
-    "hurt": {"harm", "compassion", "care", "peace"},
-    "identity": {"identity", "self", "soul", "duty", "path", "authenticity"},
-    "job": {"job", "work", "career", "duty", "livelihood", "responsibility"},
-    "jobs": {"job", "work", "career", "duty", "livelihood", "responsibility"},
-    "livelihood": {"livelihood", "work", "career", "duty", "wealth", "responsibility"},
-    "need": {"needs", "responsibility", "duty", "livelihood", "wealth", "burden"},
-    "needs": {"needs", "responsibility", "duty", "livelihood", "wealth", "burden"},
-    "partner": {"relationship", "fairness", "trust", "integrity", "business", "friend"},
-    "parent": {"family", "parent", "mother", "care", "compassion", "love", "responsibility"},
-    "parents": {"family", "parent", "mother", "care", "compassion", "love", "responsibility"},
-    "path": {"identity", "path", "duty", "authenticity", "purpose"},
-    "purpose": {"purpose", "duty", "path", "identity", "soul", "responsibility"},
-    "random": {"choice", "discernment", "duty", "wisdom", "responsibility"},
-    "randomly": {"choice", "discernment", "duty", "wisdom", "responsibility"},
-    "revenge": {"revenge", "retaliation", "forgiveness", "patience", "peace", "goodness"},
-    "self": {"self", "mind", "soul", "identity", "duty", "growth"},
-    "scam": {"business", "integrity", "honesty", "truth", "fairness", "wealth"},
-    "scamming": {"business", "integrity", "honesty", "truth", "fairness", "wealth"},
-    "soul": {"soul", "identity", "integrity", "purpose", "responsibility"},
-    "survive": {"hardship", "hope", "ease", "duty", "work", "strength", "responsibility"},
-    "trust": {"truth", "faith", "trust", "integrity"},
+UNSUPPORTED_PRODUCT_TERMS = {
+    "laptop",
+    "phone",
+    "camera",
+    "tablet",
+    "computer",
+    "monitor",
+    "headphones",
+    "software",
+    "car",
+}
+CURRENT_FACT_TERMS = {
+    "climate",
+    "forecast",
+    "rain",
+    "rainfall",
+    "raining",
+    "rains",
+    "score",
+    "stock",
+    "news",
+    "price",
+    "prices",
+    "weather",
+}
+TECH_EXPLANATION_TERMS = {
+    "quantum",
+    "entanglement",
+    "physics",
+    "algorithm",
+    "database",
+    "python",
+    "javascript",
+    "react",
+}
+MORAL_INTENT_TERMS = {
+    "duty",
+    "honest",
+    "honesty",
+    "truth",
+    "lie",
+    "lied",
+    "guilt",
+    "guilty",
+    "harm",
+    "hurt",
+    "fair",
+    "unfair",
+    "right",
+    "wrong",
+    "ethical",
+    "moral",
+    "care",
+    "parent",
+    "friend",
+    "spouse",
+    "manager",
+    "business",
+    "work",
+    "job",
+    "livelihood",
+    "responsibility",
+    "compassion",
+    "values",
 }
 
 
@@ -212,21 +249,7 @@ def _top_retrieval_score(reranked: list[dict[str, Any]]) -> float:
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    text = str(raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
-        text = re.sub(r"\s*```$", "", text).strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = json.loads(text[start : end + 1])
-    if not isinstance(parsed, dict):
-        raise ValueError("Retry planner response JSON must be an object")
-    return parsed
+    return extract_json_object(raw, object_name="Retry planner response")
 
 
 def _build_retry_planner_messages(payload: dict[str, Any], dilemma: str, turn: int) -> list[dict[str, str]]:
@@ -400,15 +423,20 @@ def _query_terms(query: str) -> list[str]:
     return terms
 
 
-def _retrieval_matches_query(query: str, reranked: list[dict[str, Any]]) -> bool:
-    terms = _query_terms(query)
-    if not terms:
-        return False
+def _normalize_focus_terms(value: Any) -> list[str]:
+    terms: list[str] = []
+    if isinstance(value, (list, tuple, set)):
+        iterable = value
+    else:
+        iterable = [value]
+    for item in iterable:
+        for term in re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", str(item).lower()):
+            if term not in QUERY_STOPWORDS and term not in terms:
+                terms.append(term)
+    return terms[:10]
 
-    expanded_terms: set[str] = set(terms)
-    for term in terms:
-        expanded_terms.update(SCRIPTURE_BRIDGES.get(term, set()))
 
+def _citation_text(reranked: list[dict[str, Any]]) -> str:
     citation_text_parts: list[str] = []
     for item in reranked:
         verse = item.get("verse") or {}
@@ -420,9 +448,186 @@ def _retrieval_matches_query(query: str, reranked: list[dict[str, Any]]) -> bool
                 " ".join(str(keyword) for keyword in verse.get("keywords", [])),
             ]
         )
-    citation_text = " ".join(citation_text_parts).lower()
-    matches = [term for term in expanded_terms if term and term in citation_text]
-    return len(matches) >= 1
+    return " ".join(citation_text_parts).lower()
+
+
+def _citation_doc_texts(reranked: list[dict[str, Any]]) -> list[str]:
+    docs: list[str] = []
+    for item in reranked:
+        verse = item.get("verse") or {}
+        docs.append(
+            " ".join(
+                [
+                    str(verse.get("translation", "")),
+                    str(verse.get("context", "")),
+                    str(verse.get("source", "")),
+                    " ".join(str(keyword) for keyword in verse.get("keywords", [])),
+                ]
+            ).strip()
+        )
+    return docs
+
+
+def _dot_product(left: list[float], right: list[float]) -> float:
+    return sum(float(a) * float(b) for a, b in zip(left, right))
+
+
+def _semantic_similarity_report(
+    query: str,
+    reranked: list[dict[str, Any]],
+    focus_terms: list[str],
+    threshold: float,
+) -> dict[str, Any]:
+    docs = _citation_doc_texts(reranked)
+    semantic_query = " ".join([query, " ".join(focus_terms)]).strip()
+    if not semantic_query or not docs:
+        return {
+            "semanticQuery": semantic_query,
+            "semanticSimilarityThreshold": threshold,
+            "semanticSimilarities": [],
+            "maxSemanticSimilarity": 0.0,
+            "passesSemanticSimilarity": False,
+            "semanticSimilarityAvailable": False,
+        }
+    try:
+        embedder = get_embedder()
+        query_vector = embedder.embed_query(semantic_query)
+        doc_vectors = embedder.embed_documents(docs)
+        similarities = [round(_dot_product(query_vector, doc_vector), 4) for doc_vector in doc_vectors]
+    except Exception as exc:
+        logger.warning("Retrieval semantic similarity check failed: %s", exc)
+        return {
+            "semanticQuery": semantic_query,
+            "semanticSimilarityThreshold": threshold,
+            "semanticSimilarities": [],
+            "maxSemanticSimilarity": 0.0,
+            "passesSemanticSimilarity": False,
+            "semanticSimilarityAvailable": False,
+            "semanticSimilarityError": str(exc),
+        }
+    max_similarity = max(similarities) if similarities else 0.0
+    return {
+        "semanticQuery": semantic_query,
+        "semanticSimilarityThreshold": threshold,
+        "semanticSimilarities": similarities,
+        "maxSemanticSimilarity": max_similarity,
+        "passesSemanticSimilarity": max_similarity >= threshold,
+        "semanticSimilarityAvailable": True,
+    }
+
+
+def _unsupported_non_guidance_reason(query: str, focus_terms: list[str]) -> str | None:
+    query_terms = set(_query_terms(query))
+    focus = set(focus_terms)
+    all_terms = query_terms | focus
+    has_moral_intent = bool(all_terms & MORAL_INTENT_TERMS)
+    lower = query.lower()
+
+    if not has_moral_intent and all_terms & {"weather", "forecast", "rain", "raining", "rainfall"} and {
+        "today",
+        "current",
+        "now",
+        "tomorrow",
+        "year",
+        "usual",
+    } & set(re.findall(r"\b[a-zA-Z]+\b", lower)):
+        return "unsupported_current_fact_query"
+    if (
+        not has_moral_intent
+        and {"which", "best"} & set(re.findall(r"\b[a-zA-Z]+\b", lower))
+        and "buy" in lower
+        and all_terms & UNSUPPORTED_PRODUCT_TERMS
+    ):
+        return "unsupported_product_recommendation"
+    if not has_moral_intent and all_terms & CURRENT_FACT_TERMS:
+        return "unsupported_current_fact_query"
+    if not has_moral_intent and all_terms & TECH_EXPLANATION_TERMS and re.search(r"\b(explain|what is|how does)\b", lower):
+        return "unsupported_explanation_query"
+    return None
+
+
+def _retrieval_relevance_report(
+    query: str,
+    reranked: list[dict[str, Any]],
+    *,
+    focus_terms: list[str] | None = None,
+    semantic_threshold: float = 0.17,
+) -> dict[str, Any]:
+    terms = _query_terms(query)
+    normalized_focus_terms = _normalize_focus_terms(focus_terms or [])
+
+    citation_text = _citation_text(reranked)
+    direct_matches = sorted(term for term in terms if term and term in citation_text)
+    focus_matches = sorted(term for term in normalized_focus_terms if term and term in citation_text)
+    matched_terms = sorted(set(direct_matches + focus_matches))
+    semantic = _semantic_similarity_report(query, reranked, normalized_focus_terms, semantic_threshold)
+    unsupported_reason = _unsupported_non_guidance_reason(query, normalized_focus_terms)
+    return {
+        "queryTerms": terms,
+        "focusTerms": normalized_focus_terms,
+        "directMatches": direct_matches,
+        "focusMatches": focus_matches,
+        "matchedTerms": matched_terms,
+        "supportMatches": focus_matches,
+        "matchedCount": len(matched_terms),
+        "supportMatchCount": len(focus_matches),
+        "unsupportedQueryReason": unsupported_reason,
+        **semantic,
+        "passesCitationRelevance": bool(semantic["passesSemanticSimilarity"] and not unsupported_reason),
+    }
+
+
+def _retrieval_gate_reason(
+    query: str,
+    reranked: list[dict[str, Any]],
+    *,
+    top_score: float,
+    threshold: float,
+    focus_terms: list[str] | None = None,
+    semantic_threshold: float = 0.17,
+) -> tuple[str | None, dict[str, Any]]:
+    relevance = _retrieval_relevance_report(
+        query,
+        reranked,
+        focus_terms=focus_terms,
+        semantic_threshold=semantic_threshold,
+    )
+    if not reranked:
+        return "no_retrieved_citations", relevance
+    if relevance.get("unsupportedQueryReason"):
+        return relevance["unsupportedQueryReason"], relevance
+    if top_score < threshold:
+        return "retrieval_score_below_threshold", relevance
+    if not relevance["passesSemanticSimilarity"]:
+        return "retrieval_not_relevant_to_query", relevance
+    return None, relevance
+
+
+def _pre_retrieval_topic_block(query: str, focus_terms: list[str] | None = None) -> tuple[str | None, dict[str, Any] | None]:
+    normalized_focus_terms = _normalize_focus_terms(focus_terms or [])
+    blocked_reason = _unsupported_non_guidance_reason(query, [])
+    if not blocked_reason:
+        blocked_reason = _unsupported_non_guidance_reason(query, normalized_focus_terms)
+    if not blocked_reason:
+        return None, None
+    report = _retrieval_relevance_report(query, [], focus_terms=normalized_focus_terms)
+    report["unsupportedQueryReason"] = blocked_reason
+    report["passesCitationRelevance"] = False
+    return blocked_reason, report
+
+
+def _retrieval_matches_query(query: str, reranked: list[dict[str, Any]], focus_terms: list[str] | None = None) -> bool:
+    return _retrieval_relevance_report(query, reranked, focus_terms=focus_terms)["passesCitationRelevance"]
+
+
+def _retrieval_gate_query(payload: dict[str, Any], ctx, fallback_dilemma: str) -> str:
+    current = str(payload.get("originalQuery") or ctx.state.get("original_dilemma") or fallback_dilemma or "").strip()
+    previous = str(payload.get("previousContextQuestion") or ctx.state.get("previous_context_question") or "").strip()
+    if _unsupported_non_guidance_reason(current, []):
+        return current
+    if payload.get("previousContextUsed") and previous:
+        return f"{previous} {current}".strip()
+    return current
 
 
 def _merge_retrieval_results(results: list[dict[str, Any]], top_k: int = 3) -> dict[str, Any]:
@@ -723,6 +928,39 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     search_query = payload.get("reactSearchQuery") or dilemma
     keywords = payload.get("keywords", [])
+    gate_query = _retrieval_gate_query(payload, ctx, dilemma)
+    pre_retrieval_blocked, pre_retrieval_report = _pre_retrieval_topic_block(gate_query, keywords)
+    if pre_retrieval_blocked:
+        _mark_agent(
+            ctx,
+            "McpRetriever",
+            category="tool",
+            status="skipped",
+            metadata={"reason": "pre_retrieval_topic_gate", "retrievalBlocked": pre_retrieval_blocked},
+        )
+        eco: EcoTracker | None = _runtime_context(ctx).get("eco")
+        if eco:
+            eco.track_stage("Retriever", confidence=0)
+        return {
+            **payload,
+            "searchQuery": gate_query,
+            "retrievalQueries": [],
+            "multiQueryUsed": False,
+            "hybridSource": None,
+            "candidatesCount": 0,
+            "rerankedCitations": [],
+            "citations": [],
+            "retrievalViaMcp": False,
+            "contextSufficient": False,
+            "topRetrievalScore": 0,
+            "rawTopRetrievalScore": 0,
+            "retrievalThreshold": settings.retrieval_confidence_threshold,
+            "retrievalBlocked": pre_retrieval_blocked,
+            "retrievalRelevance": pre_retrieval_report,
+            "retrievalGateQuery": gate_query,
+            "preRetrievalBlocked": True,
+            "preSynthesisApprovalRequired": False,
+        }
 
     sub_queries = [
         str(query).strip()
@@ -771,11 +1009,19 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
 
     reranked = retrieval.get("reranked", [])
     top_score = _top_retrieval_score(reranked)
-    query_supported = _retrieval_matches_query(dilemma, reranked)
+    retrieval_blocked, relevance_report = _retrieval_gate_reason(
+        gate_query,
+        reranked,
+        top_score=top_score,
+        threshold=settings.retrieval_confidence_threshold,
+        focus_terms=keywords,
+        semantic_threshold=settings.retrieval_semantic_similarity_threshold,
+    )
     # A high vector score is not enough: the retrieved verses must also overlap
-    # the user's actual dilemma before synthesis is allowed.
-    context_sufficient = bool(reranked) and query_supported and top_score >= settings.retrieval_confidence_threshold
-    effective_top_score = top_score if query_supported else 0
+    # the user's actual dilemma and support a moral/life-guidance concept before
+    # synthesis is allowed.
+    context_sufficient = retrieval_blocked is None
+    effective_top_score = top_score if context_sufficient else 0
 
     eco: EcoTracker | None = _runtime_context(ctx).get("eco")
     if eco:
@@ -801,7 +1047,9 @@ async def retriever_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
         "topRetrievalScore": effective_top_score,
         "rawTopRetrievalScore": top_score,
         "retrievalThreshold": settings.retrieval_confidence_threshold,
-        "retrievalBlocked": None if query_supported else "retrieval_not_relevant_to_query",
+        "retrievalBlocked": retrieval_blocked,
+        "retrievalRelevance": relevance_report,
+        "retrievalGateQuery": gate_query,
         "preSynthesisApprovalRequired": pre_synthesis_approval_required,
     }
 
@@ -1056,6 +1304,27 @@ async def finalize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
                     "Anayaa found scripture passages, but they were not closely related to your actual question. "
                     "To avoid an unsupported answer, please rephrase the dilemma with clearer life context."
                 )
+            elif payload.get("retrievalBlocked") == "citation_relevance_below_threshold":
+                result["failureReason"] = "citation_relevance_below_threshold"
+                result["userMessage"] = (
+                    "Anayaa found scripture passages, but their connection to your actual dilemma was too weak "
+                    "to support grounded guidance. To avoid an unsupported answer, please rephrase with clearer "
+                    "moral or life context."
+                )
+            elif payload.get("retrievalBlocked") == "retrieval_score_below_threshold":
+                result["failureReason"] = "retrieval_score_below_threshold"
+            elif payload.get("retrievalBlocked") == "no_retrieved_citations":
+                result["failureReason"] = "no_retrieved_citations"
+            elif str(payload.get("retrievalBlocked") or "").startswith("unsupported_"):
+                result["failureReason"] = payload.get("retrievalBlocked")
+                result["userMessage"] = (
+                    "Anayaa is designed for moral and life guidance grounded in the local scripture corpus. "
+                    "This question looks like a factual, product, or technical request, so Anayaa will not "
+                    "force a scripture-grounded answer."
+                )
+            result["retrievalBlocked"] = payload.get("retrievalBlocked")
+            result["retrievalRelevance"] = payload.get("retrievalRelevance")
+            result["rawTopRetrievalScore"] = payload.get("rawTopRetrievalScore")
         result["pipeline"] = "Google ADK ReAct Workflow + MCP Milvus Retrieval"
         result["originalQuery"] = payload.get("originalQuery") or ctx.state.get("original_dilemma") or result.get("originalQuery")
         result["rewrittenQuery"] = payload.get("rewrittenQuery") or ctx.state.get("rewritten_dilemma")

@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     llmlingua_compression_rate: float = 0.5
     adk_enabled: bool = True
     retrieval_confidence_threshold: float = 40.0
+    retrieval_semantic_similarity_threshold: float = 0.17
     audit_min_score: int = 3
     react_loop_enabled: bool = True
     react_max_turns: int = 2

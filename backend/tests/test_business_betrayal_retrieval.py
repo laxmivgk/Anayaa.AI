@@ -112,6 +112,7 @@ def test_betrayal_revenge_prompt_keeps_next_step_calm_and_proportionate():
     )
 
     assert "not to retaliate today" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Plain explanation questions about anger or judgement are not betrayal/revenge dilemmas" in SYNTHESIS_SYSTEM_PROMPT
     assert "forgiveness can be a later process" in SYNTHESIS_SYSTEM_PROMPT
     assert "do not frame protection as the opposite of forgiveness" in SYNTHESIS_SYSTEM_PROMPT
     assert "Do not say the user should choose lawful protection rather than trying to forgive" in SYNTHESIS_SYSTEM_PROMPT
