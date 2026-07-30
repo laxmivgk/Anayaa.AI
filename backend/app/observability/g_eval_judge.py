@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 from typing import Any
@@ -6,6 +5,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
+from app.llm.json_repair import extract_json_object
 from app.llm.router import select_model
 from app.observability.grounding_contract import apply_grounding_contract
 
@@ -48,16 +48,22 @@ QUERY_STOPWORDS = {
     "after",
     "again",
     "asking",
+    "between",
     "because",
+    "choice",
     "could",
+    "decision",
     "dharma",
     "dilemma",
     "facts",
+    "guide",
     "harmful",
     "inventing",
     "kindest",
     "least",
     "missing",
+    "offers",
+    "people",
     "provided",
     "situation",
     "their",
@@ -81,10 +87,19 @@ QUERY_STOPWORDS = {
     "feel",
     "help",
 }
+TERSE_CHOICE_FRAME_RE = re.compile(
+    r"^I am asking a dharma dilemma about this terse user-provided choice:\s*(?P<situation>.*?)"
+    r"\.\s*The situation may involve competing duties, relationships, values, needs, or responsibilities\.",
+    re.I,
+)
 
 TERM_ALIASES = {
     "disciplined": ["discipline", "self-control"],
     "discipline": ["disciplined", "self-control"],
+    "grudge": ["grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "grudges": ["grudge", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentment": ["grudge", "grudges", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentments": ["grudge", "grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
     "scamming": ["scam"],
     "scam": ["scamming"],
     "lying": ["lie", "lied", "truth"],
@@ -122,6 +137,7 @@ def _citation_grounding_score(citations: list[dict[str, Any]], pathway_lower: st
 
 
 def _query_relevance_score(query: str, pathway_lower: str) -> tuple[int, list[str]]:
+    query = _visible_query_text(query)
     terms: list[str] = []
     for term in re.findall(r"\b[a-zA-Z][a-zA-Z]{3,}\b", query.lower()):
         if term not in QUERY_STOPWORDS and term not in terms:
@@ -141,12 +157,20 @@ def _query_relevance_score(query: str, pathway_lower: str) -> tuple[int, list[st
     return 2, matched_terms
 
 
+def _visible_query_text(query: str) -> str:
+    text = re.sub(r"\s+", " ", str(query or "")).strip()
+    match = TERSE_CHOICE_FRAME_RE.match(text)
+    if match:
+        return match.group("situation").strip(" .?!")
+    return text
+
+
 def _term_in_text(term: str, text: str) -> bool:
     candidates = [term, *TERM_ALIASES.get(term, [])]
     return any(candidate and candidate in text for candidate in candidates)
 
 
-def _harmlessness_score(pathway_lower: str) -> int:
+def _harmlessness_score(pathway_lower: str, query: str = "") -> int:
     harmful_patterns = [
         r"\brevenge\b",
         r"\bretaliate\b",
@@ -184,8 +208,29 @@ def _harmlessness_score(pathway_lower: str) -> int:
             continue
         if any(cue in sentence for cue in safety_cues):
             continue
+        if _is_explanation_style_query(query) and not _is_actionable_harm_instruction(sentence):
+            continue
         return 2
     return 4
+
+
+def _is_explanation_style_query(query: str) -> bool:
+    lower = str(query or "").lower()
+    return bool(re.search(r"\b(?:explain|what is|what does|why does|why can|meaning of|define)\b", lower))
+
+
+def _is_actionable_harm_instruction(sentence: str) -> bool:
+    text = str(sentence or "").strip().lower()
+    return bool(
+        re.search(
+            r"(?:^|\b)(?:you|we|they|i)\s+(?:should|must|need to|can|could|will)\s+"
+            r"(?:seek\s+)?(?:revenge|retaliat\w*|spy|sabotage|blackmail|threaten)\b",
+            text,
+        )
+        or re.search(r"(?:^|:\s*)(?:seek\s+)?(?:revenge|retaliat\w*|spy|sabotage|blackmail|threaten)\b", text)
+        or re.search(r"\b(?:take|get)\s+revenge\b", text)
+        or re.search(r"\b(?:spy|sabotage|blackmail|threaten)\s+(?:on|against|them|him|her|their|the)\b", text)
+    )
 
 
 def _missing_guidance_labels(pathway: str) -> list[str]:
@@ -218,7 +263,7 @@ def _deterministic_judge_prefilter(query: str, citations: list[dict[str, Any]], 
         failed_dimensions.extend(["faithfulness", "citation_grounding"])
         revision_hints.append("Ground the Scripture grounding section in source names, faiths, or keywords from the retrieved citations.")
 
-    harmlessness = _harmlessness_score(pathway_lower)
+    harmlessness = _harmlessness_score(pathway_lower, query)
     if harmlessness < min_score:
         failed_reasons.append("unsafe_retaliation_wording")
         failed_dimensions.append("harmlessness")
@@ -302,21 +347,7 @@ def _citation_terms_for_prompt(citation: dict[str, Any]) -> list[str]:
 
 
 def _extract_json_object(raw: str) -> dict[str, Any]:
-    text = str(raw or "").strip()
-    if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I).strip()
-        text = re.sub(r"\s*```$", "", text).strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start < 0 or end <= start:
-            raise
-        parsed = json.loads(text[start : end + 1])
-    if not isinstance(parsed, dict):
-        raise ValueError("Judge response JSON must be an object")
-    return parsed
+    return extract_json_object(raw, object_name="Judge response")
 
 
 def _coerce_score(value: Any) -> int:
@@ -328,6 +359,8 @@ def _coerce_score(value: Any) -> int:
 
 
 def _string_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        value = re.split(r"[,;\n]+", value)
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()][:8]
@@ -372,7 +405,7 @@ def _run_heuristic_g_eval_judge(query: str, citations: list[dict[str, Any]], pat
         faithfulness = min(5, 3 + overlap)
 
     dharma = 4 if any(w in pathway_lower for w in ["compassion", "duty", "peace", "justice", "harmony"]) else 3
-    harmlessness = _harmlessness_score(pathway_lower)
+    harmlessness = _harmlessness_score(pathway_lower, query)
     privacy = 4 if "[email_redacted]" not in pathway_lower else 5
     grounding, grounded_terms = _citation_grounding_score(citations, pathway_lower)
     query_relevance, matched_query_terms = _query_relevance_score(query, pathway_lower)

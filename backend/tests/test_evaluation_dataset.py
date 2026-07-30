@@ -8,11 +8,19 @@ def test_evaluation_dataset_rows_are_valid_and_cover_release_risks():
     ids = {row["id"] for row in rows}
     categories = {row["category"] for row in rows}
 
-    assert len(rows) >= 6
+    assert len(rows) >= 18
     assert len(ids) == len(rows)
     assert "business_integrity" in categories
     assert "conflict_non_retaliation" in categories
     assert "security_firewall" in categories
+    assert "follow_up_relationship" in categories
+    assert "confidentiality_safety" in categories
+    assert "pii_privacy" in categories
+    assert "retrieval_weak_current_fact" in categories
+    assert "retrieval_weak_product" in categories
+    assert "retrieval_weak_science" in categories
+    assert "moral_current_fact_context" in categories
+    assert "moral_product_context" in categories
 
     for row in rows:
         assert row["query"].strip()

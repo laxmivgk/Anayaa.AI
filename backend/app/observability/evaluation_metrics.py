@@ -125,6 +125,123 @@ def retrieval_metrics_at_k(
     }
 
 
+def _retrieval_report_score(report: dict[str, Any], *keys: str) -> float:
+    current: Any = report
+    for key in keys:
+        if not isinstance(current, dict):
+            return 0.0
+        current = current.get(key)
+    try:
+        return float(current or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _retrieval_report_unsupported(report: dict[str, Any]) -> bool:
+    relevance = report.get("retrievalRelevance") if isinstance(report.get("retrievalRelevance"), dict) else report
+    return bool(relevance.get("unsupportedQueryReason"))
+
+
+def _observed_thresholds(values: list[float], default: float) -> list[float]:
+    observed = sorted({round(value, 4) for value in values if value >= 0})
+    candidates = {0.0, round(default, 4), *observed}
+    for value in observed:
+        candidates.add(round(value + 0.0001, 4))
+    return sorted(candidates)
+
+
+def calibrate_retrieval_gate_thresholds(
+    rows: list[dict[str, Any]],
+    reports_by_id: dict[str, dict[str, Any]],
+    *,
+    default_score_threshold: float = 40.0,
+    default_semantic_threshold: float = 0.17,
+) -> dict[str, Any]:
+    """Recommend retrieval thresholds from labeled eval rows and raw retrieval reports."""
+    cases: list[dict[str, Any]] = []
+    for row in rows:
+        expected_status = row.get("expectedStatus")
+        if expected_status not in {"completed", "insufficient_context"}:
+            continue
+        report = reports_by_id.get(str(row.get("id"))) or {}
+        relevance = report.get("retrievalRelevance") if isinstance(report.get("retrievalRelevance"), dict) else report
+        top_score = _retrieval_report_score(report, "rawTopRetrievalScore") or _retrieval_report_score(report, "topRetrievalScore")
+        semantic = _retrieval_report_score(relevance, "maxSemanticSimilarity")
+        cases.append(
+            {
+                "id": str(row.get("id")),
+                "expectedPass": expected_status == "completed",
+                "topScore": top_score,
+                "semanticSimilarity": semantic,
+                "unsupported": _retrieval_report_unsupported(report),
+            }
+        )
+
+    score_thresholds = _observed_thresholds([case["topScore"] for case in cases], default_score_threshold)
+    semantic_thresholds = _observed_thresholds(
+        [case["semanticSimilarity"] for case in cases],
+        default_semantic_threshold,
+    )
+
+    best: dict[str, Any] | None = None
+    for score_threshold in score_thresholds:
+        for semantic_threshold in semantic_thresholds:
+            tp = tn = fp = fn = 0
+            per_case = []
+            for case in cases:
+                predicted_pass = (
+                    not case["unsupported"]
+                    and case["topScore"] >= score_threshold
+                    and case["semanticSimilarity"] >= semantic_threshold
+                )
+                expected_pass = case["expectedPass"]
+                if expected_pass and predicted_pass:
+                    tp += 1
+                elif not expected_pass and not predicted_pass:
+                    tn += 1
+                elif not expected_pass and predicted_pass:
+                    fp += 1
+                else:
+                    fn += 1
+                per_case.append({**case, "predictedPass": predicted_pass})
+            positive_total = tp + fn
+            negative_total = tn + fp
+            true_positive_rate = tp / positive_total if positive_total else 0.0
+            true_negative_rate = tn / negative_total if negative_total else 0.0
+            balanced_accuracy = (true_positive_rate + true_negative_rate) / 2
+            candidate = {
+                "recommendedRetrievalScoreThreshold": score_threshold,
+                "recommendedSemanticSimilarityThreshold": semantic_threshold,
+                "balancedAccuracy": balanced_accuracy,
+                "truePositiveRate": true_positive_rate,
+                "trueNegativeRate": true_negative_rate,
+                "counts": {"tp": tp, "tn": tn, "fp": fp, "fn": fn},
+                "evaluatedCases": len(cases),
+                "perCase": per_case,
+            }
+            if best is None or (
+                candidate["balancedAccuracy"],
+                candidate["trueNegativeRate"],
+                candidate["truePositiveRate"],
+            ) > (
+                best["balancedAccuracy"],
+                best["trueNegativeRate"],
+                best["truePositiveRate"],
+            ):
+                best = candidate
+
+    return best or {
+        "recommendedRetrievalScoreThreshold": default_score_threshold,
+        "recommendedSemanticSimilarityThreshold": default_semantic_threshold,
+        "balancedAccuracy": 0.0,
+        "truePositiveRate": 0.0,
+        "trueNegativeRate": 0.0,
+        "counts": {"tp": 0, "tn": 0, "fp": 0, "fn": 0},
+        "evaluatedCases": 0,
+        "perCase": [],
+    }
+
+
 @dataclass
 class BinaryCounts:
     true_positive: int = 0

@@ -62,6 +62,7 @@ PLANNER_STOPWORDS = {
     "missing",
     "name_redacted",
     "one",
+    "people",
     "phone",
     "phone_redacted",
     "please",
@@ -123,6 +124,8 @@ PLANNER_PRIORITY_TERMS = {
     "father",
     "friend",
     "gift",
+    "grudge",
+    "grudges",
     "guilt",
     "honest",
     "help",
@@ -150,6 +153,8 @@ PLANNER_PRIORITY_TERMS = {
     "random",
     "randomly",
     "relationship",
+    "resentment",
+    "resentments",
     "responsibility",
     "revenge",
     "self",
@@ -173,6 +178,7 @@ PLANNER_TOKEN_ALIASES = {
     "duties": "duty",
     "depressed": "depression",
     "guilty": "guilt",
+    "grudges": "grudge",
     "hopeless": "hope",
     "lied": "lie",
     "lying": "lie",
@@ -180,6 +186,8 @@ PLANNER_TOKEN_ALIASES = {
     "micro": "manager",
     "micromanaged": "manager",
     "micromanaging": "manager",
+    "resentful": "resentment",
+    "resentments": "resentment",
     "relationships": "relationship",
     "responsibilities": "responsibility",
     "stressed": "stress",
@@ -205,6 +213,8 @@ MORAL_REWRITE_TERMS = {
     "conflict",
     "dropshipping",
     "forgive",
+    "grudge",
+    "grudges",
     "friend",
     "guilt",
     "honest",
@@ -217,6 +227,7 @@ MORAL_REWRITE_TERMS = {
     "path",
     "purpose",
     "relationship",
+    "resentment",
     "self",
     "soul",
     "truth",
@@ -410,6 +421,8 @@ def _planner_candidate_terms(dilemma: str, optimized_query: str) -> list[str]:
         candidates.extend(["contentment", "simplicity", "detachment", "trust"])
     if any(term in lower for term in ["lie", "lied", "lying", "truth"]):
         candidates.extend(["honesty", "truth"])
+    if any(term in lower for term in ["grudge", "grudges", "resentment", "resentments", "resentful"]):
+        candidates.extend(["forgiveness", "resentment", "anger", "hatred", "compassion", "peace"])
     if any(term in lower for term in ["anxiety", "stressed", "stress"]):
         candidates.extend(["compassion", "protection"])
     if any(term in lower for term in ["depressed", "depression", "hopeless", "hope", "comfort"]):
