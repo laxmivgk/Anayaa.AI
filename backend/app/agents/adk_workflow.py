@@ -43,6 +43,7 @@ from app.observability.guidance_reasons import build_guidance_reasons
 from app.observability.latency import AgentLatencyTracker
 from app.observability.plan_trace import persist_request_plan_trace
 from app.retrieval.embeddings import get_embedder
+from app.retrieval.hybrid_search import CONCEPT_CLOUDS
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +452,59 @@ def _citation_text(reranked: list[dict[str, Any]]) -> str:
     return " ".join(citation_text_parts).lower()
 
 
+def _word_tokens(text: str) -> set[str]:
+    return set(re.findall(r"\b[a-zA-Z][a-zA-Z0-9_-]{2,}\b", str(text or "").lower()))
+
+
+def _term_variants(term: str) -> set[str]:
+    normalized = term.strip().lower()
+    variants = {normalized} if normalized else set()
+    if normalized.endswith("ies") and len(normalized) > 4:
+        variants.add(f"{normalized[:-3]}y")
+    if normalized.endswith("es") and len(normalized) > 4:
+        variants.add(normalized[:-2])
+    if normalized.endswith("s") and len(normalized) > 3:
+        variants.add(normalized[:-1])
+    if normalized.endswith("ing") and len(normalized) > 5:
+        variants.add(normalized[:-3])
+    return {variant for variant in variants if len(variant) > 2}
+
+
+def _expanded_support_terms(term: str) -> set[str]:
+    expanded = _term_variants(term)
+    for concept, related_terms in CONCEPT_CLOUDS.items():
+        related_tokens = set()
+        for related in related_terms:
+            related_tokens.update(_term_variants(related))
+        if expanded & ({concept} | related_tokens):
+            expanded.add(concept)
+            expanded.update(related_tokens)
+    return expanded
+
+
+def _term_supported_by_text(term: str, citation_text: str, citation_tokens: set[str]) -> bool:
+    for candidate in _expanded_support_terms(term):
+        if " " in candidate:
+            if candidate in citation_text:
+                return True
+        elif candidate in citation_tokens:
+            return True
+    return False
+
+
+def _lexical_support_score(
+    *,
+    direct_matches: list[str],
+    focus_matches: list[str],
+    reranked: list[dict[str, Any]],
+) -> float:
+    if not reranked:
+        return 0.0
+    direct_weight = min(len(direct_matches), 4) * 0.12
+    focus_weight = min(len(focus_matches), 4) * 0.25
+    return round(min(1.0, direct_weight + focus_weight), 4)
+
+
 def _citation_doc_texts(reranked: list[dict[str, Any]]) -> list[str]:
     docs: list[str] = []
     for item in reranked:
@@ -557,10 +611,21 @@ def _retrieval_relevance_report(
     normalized_focus_terms = _normalize_focus_terms(focus_terms or [])
 
     citation_text = _citation_text(reranked)
-    direct_matches = sorted(term for term in terms if term and term in citation_text)
-    focus_matches = sorted(term for term in normalized_focus_terms if term and term in citation_text)
+    citation_tokens = _word_tokens(citation_text)
+    direct_matches = sorted(
+        term for term in terms if term and _term_supported_by_text(term, citation_text, citation_tokens)
+    )
+    focus_matches = sorted(
+        term for term in normalized_focus_terms if term and _term_supported_by_text(term, citation_text, citation_tokens)
+    )
     matched_terms = sorted(set(direct_matches + focus_matches))
     semantic = _semantic_similarity_report(query, reranked, normalized_focus_terms, semantic_threshold)
+    lexical_score = _lexical_support_score(
+        direct_matches=direct_matches,
+        focus_matches=focus_matches,
+        reranked=reranked,
+    )
+    max_similarity = max(float(semantic.get("maxSemanticSimilarity") or 0.0), lexical_score)
     unsupported_reason = _unsupported_non_guidance_reason(query, normalized_focus_terms)
     return {
         "queryTerms": terms,
@@ -573,7 +638,10 @@ def _retrieval_relevance_report(
         "supportMatchCount": len(focus_matches),
         "unsupportedQueryReason": unsupported_reason,
         **semantic,
-        "passesCitationRelevance": bool(semantic["passesSemanticSimilarity"] and not unsupported_reason),
+        "lexicalSupportScore": lexical_score,
+        "maxSemanticSimilarity": max_similarity,
+        "passesSemanticSimilarity": bool(max_similarity >= semantic_threshold),
+        "passesCitationRelevance": bool(max_similarity >= semantic_threshold and not unsupported_reason),
     }
 
 
