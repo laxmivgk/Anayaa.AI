@@ -45,6 +45,8 @@ interface AuditScores {
     groundedCitationCount?: number;
     citationCount?: number;
     groundedCitationIds?: string[];
+    limitedGrounding?: boolean;
+    groundingRequirement?: string;
   };
   judgeModel?: string;
 }
@@ -207,6 +209,12 @@ function llmScoreCheckPassed(audit?: AuditScores | null): boolean {
   if (!audit?.scores) return false;
   const minScore = auditMinScore(audit);
   return Object.values(audit.scores).every((score) => score >= minScore);
+}
+
+function auditLabel(value: string): string {
+  return value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function gEvalPendingReason(result?: QueryResult | null): string {
@@ -376,12 +384,14 @@ function usedCitationsForResult(result?: QueryResult | null): ScriptureVerse[] {
   if (citations.length === 0) return [];
 
   // Prefer explicit grounding-contract IDs so the UI shows only citations used by the final answer.
-  const groundedIds = new Set([
-    ...(result?.auditScores?.groundingContract?.groundedCitationIds || []),
-    ...(result?.auditScores?.groundedCitationIds || []),
-  ].map((value) => String(value)));
-  if (groundedIds.size > 0) {
-    return citations.filter((citation) => groundedIds.has(String(citation.id)) || groundedIds.has(String(citation.source)));
+  const contractGroundedIds = new Set((result?.auditScores?.groundingContract?.groundedCitationIds || []).map((value) => String(value)));
+  if (contractGroundedIds.size > 0) {
+    return citations.filter((citation) => contractGroundedIds.has(String(citation.id)) || contractGroundedIds.has(String(citation.source)));
+  }
+
+  const auditGroundedIds = new Set((result?.auditScores?.groundedCitationIds || []).map((value) => String(value)));
+  if (!result?.auditScores?.groundingContract && auditGroundedIds.size > 0) {
+    return citations.filter((citation) => auditGroundedIds.has(String(citation.id)) || auditGroundedIds.has(String(citation.source)));
   }
 
   const evidenceText = [
@@ -1044,6 +1054,7 @@ export default function App() {
           // Follow-up mode gives Anayaa recent local context; new dilemmas stay
           // standalone so old guidance does not silently influence the answer.
           previousContext: dilemmaStartMode === "follow-up" ? buildPreviousContextPayload(questionHistory) : [],
+          usePreviousContext: dilemmaStartMode === "follow-up",
         }),
       });
       const data = await res.json();
@@ -1266,11 +1277,11 @@ export default function App() {
 
   if (!token) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
+      <div className="min-h-screen flex items-center justify-center bg-[#FAF8F1] p-6 text-[#26251F]">
         {/* Login copy stays product-focused while internal agent/debug details remain hidden. */}
-        <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="bg-white p-8 rounded-3xl shadow-sm border border-[#D9D2C5] w-full max-w-md">
-          <h1 className="text-4xl italic mb-3">Anayaa.AI</h1>
-          <p className="mb-6 text-sm text-stone-500">Dharma-driven, resource-aware edge guidance</p>
+        <form onSubmit={authMode === "login" ? handleLogin : handlePasswordResetConfirm} className="w-full max-w-md rounded-3xl border border-t-4 border-[#DED6C7] border-t-[#C58A2A] bg-white p-6 shadow-[0_18px_60px_rgba(31,111,104,0.10)] md:p-8">
+          <h1 className="mb-3 text-center text-4xl italic text-[#1F6F68]">Anayaa.AI</h1>
+          <p className="mb-6 text-center text-sm text-[#66614F]">Dharma-driven, resource-aware edge guidance</p>
           {authMode === "login" && (
             <div className="mb-4">
               <button
@@ -1278,18 +1289,26 @@ export default function App() {
                 onClick={() => setShowFirstTimeHelp((visible) => !visible)}
                 aria-expanded={showFirstTimeHelp}
                 aria-controls="first-time-login-help"
-                className="mx-auto block text-center text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+                className="mx-auto block text-center text-sm font-medium text-[#1F6F68] underline-offset-4 hover:underline"
               >
                 First time user?
               </button>
               {showFirstTimeHelp && (
-                <p id="first-time-login-help" className="mt-2 rounded-xl border border-[#D9D2C5] bg-[#F8F5EF] px-4 py-3 text-xs leading-5 text-[#5A5A40]">
-                  Enter any valid email and a password of at least 8 characters. Use that same email and password for future sign-ins; no separate sign-up or registration is required.
+                <p id="first-time-login-help" className="mt-2 rounded-xl border border-[#DED6C7] bg-[#FAF8F1] px-4 py-3 text-xs leading-5 text-[#66614F]">
+                  Enter any valid email and a password of at least 8 characters. Use that same email and password for future sign-ins; no separate sign-up or registration is required. By continuing, you agree to the{" "}
+                  <a className="font-semibold text-[#1F6F68] underline underline-offset-4" href="/legal/terms.html" target="_blank" rel="noreferrer">
+                    Terms of Use
+                  </a>{" "}
+                  and{" "}
+                  <a className="font-semibold text-[#1F6F68] underline underline-offset-4" href="/legal/privacy.html" target="_blank" rel="noreferrer">
+                    Privacy Notice
+                  </a>
+                  .
                 </p>
               )}
             </div>
           )}
-          <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+          <label htmlFor="login-email" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
             Email
           </label>
           <input
@@ -1302,7 +1321,7 @@ export default function App() {
               setResetMessage(null);
             }}
             placeholder="your@email.com"
-            className={`w-full border border-[#D9D2C5] rounded-xl px-4 py-3 ${authMode === "reset" ? "mb-2" : "mb-4"}`}
+            className={`w-full rounded-xl border border-[#DED6C7] px-4 py-3 outline-none focus:border-[#1F6F68] focus:ring-2 focus:ring-[#1F6F68]/15 ${authMode === "reset" ? "mb-2" : "mb-4"}`}
           />
           {authMode === "reset" && (
             <p className="mb-4 text-xs leading-5 text-stone-500">
@@ -1311,7 +1330,7 @@ export default function App() {
           )}
           {authMode === "login" ? (
             <>
-              <label htmlFor="login-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+              <label htmlFor="login-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
                 Password
               </label>
               <div className="relative mb-3">
@@ -1325,14 +1344,14 @@ export default function App() {
                     setResetMessage(null);
                   }}
                   placeholder="Enter password"
-                  className="w-full rounded-xl border border-[#D9D2C5] px-4 py-3 pr-12"
+                  className="w-full rounded-xl border border-[#DED6C7] px-4 py-3 pr-12 outline-none focus:border-[#1F6F68] focus:ring-2 focus:ring-[#1F6F68]/15"
                 />
                 <button
                   type="button"
                   onClick={() => setShowLoginPassword((visible) => !visible)}
                   aria-label={showLoginPassword ? "Hide password" : "Show password"}
                   title={showLoginPassword ? "Hide password" : "Show password"}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F5F2ED] hover:text-[#5A5A40]"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F3E4C1] hover:text-[#1F6F68]"
                 >
                   {showLoginPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -1344,7 +1363,7 @@ export default function App() {
                   setError(null);
                   setResetMessage(null);
                 }}
-                className="mb-4 text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+                className="mb-4 text-sm font-medium text-[#1F6F68] underline-offset-4 hover:underline"
               >
                 Forgot password?
               </button>
@@ -1354,11 +1373,11 @@ export default function App() {
               <button
                 type="button"
                 onClick={handlePasswordResetRequest}
-                className="mb-4 w-full border border-[#5A5A40] text-[#5A5A40] rounded-xl py-3"
+                className="mb-4 w-full rounded-xl border border-[#1F6F68] py-3 text-[#1F6F68] hover:bg-[#EEF7F5]"
               >
                 Send reset instructions
               </button>
-              <label htmlFor="reset-code" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+              <label htmlFor="reset-code" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
                 Reset code
               </label>
               <input
@@ -1368,9 +1387,9 @@ export default function App() {
                 value={resetCode}
                 onChange={(e) => setResetCode(e.target.value)}
                 placeholder="Enter code"
-                className="w-full border border-[#D9D2C5] rounded-xl px-4 py-3 mb-4"
+                className="mb-4 w-full rounded-xl border border-[#DED6C7] px-4 py-3 outline-none focus:border-[#1F6F68] focus:ring-2 focus:ring-[#1F6F68]/15"
               />
-              <label htmlFor="reset-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+              <label htmlFor="reset-password" className="mb-2 block font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
                 New password
               </label>
               <div className="relative mb-3">
@@ -1381,14 +1400,14 @@ export default function App() {
                   value={resetPassword}
                   onChange={(e) => setResetPassword(e.target.value)}
                   placeholder="Enter new password"
-                  className="w-full rounded-xl border border-[#D9D2C5] px-4 py-3 pr-12"
+                  className="w-full rounded-xl border border-[#DED6C7] px-4 py-3 pr-12 outline-none focus:border-[#1F6F68] focus:ring-2 focus:ring-[#1F6F68]/15"
                 />
                 <button
                   type="button"
                   onClick={() => setShowResetPassword((visible) => !visible)}
                   aria-label={showResetPassword ? "Hide new password" : "Show new password"}
                   title={showResetPassword ? "Hide new password" : "Show new password"}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F5F2ED] hover:text-[#5A5A40]"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-stone-500 hover:bg-[#F3E4C1] hover:text-[#1F6F68]"
                 >
                   {showResetPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -1402,51 +1421,51 @@ export default function App() {
                   setError(null);
                   setResetMessage(null);
                 }}
-                className="mb-4 text-sm font-medium text-[#5A5A40] underline-offset-4 hover:underline"
+                className="mb-4 text-sm font-medium text-[#1F6F68] underline-offset-4 hover:underline"
               >
                 Back to sign in
               </button>
             </>
           )}
-          {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
-          {resetMessage && <p className="text-[#5A5A40] text-sm mb-3">{resetMessage}</p>}
-          <button type="submit" className="w-full bg-[#5A5A40] text-white rounded-xl py-3">
+          {error && <p className="mb-3 text-sm text-[#B94A48]">{error}</p>}
+          {resetMessage && <p className="text-[#1F6F68] text-sm mb-3">{resetMessage}</p>}
+          <button type="submit" className="w-full rounded-xl bg-[#1F6F68] py-3 text-white hover:bg-[#185A54]">
             {authMode === "login" ? "Enter" : "Reset password"}
           </button>
-          <div className="mt-6 border-t border-[#D9D2C5] pt-4">
+          <div className="mt-6 border-t border-[#DED6C7] pt-4">
             <p className="flex items-center justify-center gap-2 text-xs text-stone-400">
               <Lock className="h-3.5 w-3.5" />
-              100% Private Stdout Local Tunnel
+              Private local runtime
             </p>
           </div>
         </form>
         <p className="fixed bottom-3 right-4 text-[10px] text-stone-400">
-          Built with Llama and Gemma
+          Built with Llama and Qwen
         </p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen flex flex-col md:flex-row">
       {showSessionWarning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-6">
-          <div className="w-full max-w-md rounded-3xl border border-[#D9D2C5] bg-white p-6 shadow-xl">
-            <h2 className="text-xl italic text-[#5A5A40]">Session expiring soon</h2>
+          <div className="w-full max-w-md rounded-3xl border border-[#DED6C7] bg-white p-6 shadow-xl">
+            <h2 className="text-xl italic text-[#1F6F68]">Session expiring soon</h2>
             <p className="mt-3 text-sm text-stone-600">
               Your session will expire in {secondsUntilExpiry} seconds. Continue to refresh your session, or cancel to log out.
             </p>
             <div className="mt-6 flex justify-end gap-3">
               <button
                 onClick={handleLogout}
-                className="rounded-xl border border-[#D9D2C5] px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
+                className="rounded-xl border border-[#DED6C7] px-4 py-2 text-sm text-stone-600 hover:bg-stone-50"
               >
                 Cancel
               </button>
               <button
                 onClick={handleContinueSession}
                 disabled={refreshingSession}
-                className="rounded-xl bg-[#5A5A40] px-4 py-2 text-sm text-white disabled:opacity-60"
+                className="rounded-xl bg-[#1F6F68] px-4 py-2 text-sm text-white hover:bg-[#185A54] disabled:opacity-60"
               >
                 {refreshingSession ? "Continuing..." : "Continue"}
               </button>
@@ -1454,38 +1473,38 @@ export default function App() {
           </div>
         </div>
       )}
-      <aside className="w-72 bg-[#F5F2ED] border-r border-[#D9D2C5] p-6 flex flex-col">
-        <div className="border-b border-[#D9D2C5] pb-5">
-          <h1 className="text-2xl font-semibold italic tracking-wide text-[#3F4A22] drop-shadow-sm">
+      <aside className="flex w-full flex-col border-b border-[#DED6C7] bg-[#EEF7F5] p-4 md:min-h-screen md:w-72 md:border-b-0 md:border-r md:p-6">
+        <div className="border-b border-[#DED6C7] pb-4 md:pb-5">
+          <h1 className="text-2xl font-semibold italic tracking-wide text-[#1F6F68] drop-shadow-sm">
             Anayaa.AI
           </h1>
-          <p className="mt-2 text-sm font-semibold leading-5 text-[#737A2E]">
+          <p className="mt-2 text-sm font-semibold leading-5 text-[#66614F]">
             Clear guidance, grounded in wisdom
           </p>
           <p className="mt-2 break-all font-mono text-[11px] text-stone-500">{email}</p>
         </div>
-        <nav className="mt-6 space-y-2">
+        <nav className="mt-4 grid grid-cols-3 gap-2 md:mt-6 md:block md:space-y-2">
           {(["pathway", "scriptures", "eco"] as Tab[]).map((tab) => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
-              className={`w-full text-left px-3 py-2 rounded-xl text-sm capitalize ${activeTab === tab ? "bg-white shadow-sm" : "hover:bg-white/50"
+              className={`w-full rounded-xl px-2 py-2 text-center text-xs capitalize transition md:px-3 md:text-left md:text-sm ${activeTab === tab ? "bg-white text-[#1F6F68] shadow-sm ring-1 ring-[#DED6C7]" : "text-[#66614F] hover:bg-white/60 hover:text-[#1F6F68]"
                 }`}
             >
-              {tab === "pathway" ? "Active Pathway" : tab === "eco" ? "Eco Audit" : "Scripture Center"}
+              {tab === "pathway" ? "Active Pathway" : tab === "eco" ? "Guidance Audit" : "Scripture Center"}
             </button>
           ))}
         </nav>
         <button
           onClick={handleLogout}
-          className="mt-4 flex items-center gap-2 px-3 py-2 text-sm font-bold text-[#6D7130] hover:text-[#4A4F1E]"
+          className="mt-4 flex items-center gap-2 px-3 py-2 text-sm font-bold text-[#1F6F68] hover:text-[#185A54]"
         >
           <LogOut className="h-4 w-4" />
           Log out
         </button>
-        <div className="mt-auto pt-4 border-t border-[#D9D2C5] text-xs space-y-1">
+        <div className="mt-4 space-y-1 border-t border-[#DED6C7] pt-4 text-xs md:mt-auto">
           <p className="flex items-center gap-1 font-bold uppercase text-stone-500">
-            <Leaf className="w-3 h-3 text-emerald-600" /> CodeCarbon Audit
+            <Leaf className="w-3 h-3 text-emerald-600" /> Resource Impact
           </p>
           <div className="flex justify-between font-mono">
             <span>Today CO₂</span>
@@ -1502,12 +1521,12 @@ export default function App() {
         </div>
       </aside>
 
-      <main className="flex-1 p-8 bg-[#FBF9F6] overflow-y-auto">
+      <main className="flex-1 overflow-y-auto bg-[#FAF8F1] p-4 md:p-8">
         {activeTab === "pathway" && (
           <div className="grid max-w-6xl gap-6">
             <div className="space-y-6">
-              <section className="rounded-2xl border border-[#D9D2C5] bg-white p-5">
-                <label htmlFor="dilemma-query" className="block font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+              <section className="rounded-2xl border border-[#DED6C7] bg-white p-4 md:p-5">
+                <label htmlFor="dilemma-query" className="block font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
                   Share your moral dilemma
                 </label>
                 <p className="mt-2 text-sm text-stone-500">
@@ -1528,13 +1547,13 @@ export default function App() {
                         ? "Choose New dilemma or Follow-up dilemma first."
                         : "Choose New dilemma first."
                   }
-                  className="mt-4 w-full resize-none rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4 text-sm outline-none focus:border-[#5A5A40] disabled:cursor-default disabled:text-stone-500"
+                  className="mt-4 w-full resize-none rounded-xl border border-[#DED6C7] bg-[#FAF8F1] p-4 text-sm outline-none focus:border-[#1F6F68] disabled:cursor-default disabled:text-stone-500"
                 />
                 <p className="mt-2 text-right font-mono text-[11px] text-stone-400">
                   {query.length.toLocaleString()} / {QUERY_CHARACTER_LIMIT.toLocaleString()} characters
                 </p>
                 {dilemmaStartMode && !result && (
-                  <p className="mt-2 text-right font-mono text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]">
+                  <p className="mt-2 text-right font-mono text-[10px] font-bold uppercase tracking-wider text-[#1F6F68]">
                     {dilemmaStartMode === "follow-up" ? "Follow-up mode active" : "New dilemma mode active"}
                   </p>
                 )}
@@ -1542,7 +1561,7 @@ export default function App() {
                   <button
                     onClick={() => handleStartDilemma("new")}
                     disabled={loading || (modeLocked && dilemmaStartMode === "follow-up")}
-                    className={`text-sm font-bold underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline ${!result && dilemmaStartMode === "new" ? "text-[#3F4A22]" : "text-[#5A5A40]"}`}
+                    className={`flex-1 rounded-full px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline sm:flex-none ${!result && dilemmaStartMode === "new" ? "bg-[#EEF7F5] text-[#1F6F68]" : "text-[#66614F] hover:bg-[#FAF8F1] hover:text-[#1F6F68]"}`}
                     aria-label="Start new dilemma"
                   >
                     New dilemma
@@ -1551,7 +1570,7 @@ export default function App() {
                     <button
                       onClick={() => handleStartDilemma("follow-up")}
                       disabled={loading || (modeLocked && dilemmaStartMode === "new")}
-                      className={`text-sm font-bold underline-offset-4 hover:underline disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline ${!result && dilemmaStartMode === "follow-up" ? "text-[#3F4A22]" : "text-[#5A5A40]"}`}
+                      className={`flex-1 rounded-full px-3 py-2 text-sm font-bold transition disabled:cursor-not-allowed disabled:text-stone-300 disabled:no-underline sm:flex-none ${!result && dilemmaStartMode === "follow-up" ? "bg-[#EEF7F5] text-[#1F6F68]" : "text-[#66614F] hover:bg-[#FAF8F1] hover:text-[#1F6F68]"}`}
                       aria-label="Ask follow-up dilemma"
                     >
                       Follow-up dilemma
@@ -1560,7 +1579,7 @@ export default function App() {
                   <button
                     onClick={() => handleQuery(true)}
                     disabled={loading || !canSubmitQuery}
-                    className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1F6F68] px-5 py-3 text-sm font-bold text-white shadow-sm hover:bg-[#185A54] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                   >
                     <Sparkles className="h-4 w-4" />
                     {loadingAction === "interactive-guidance" ? "Preparing..." : "The Interactive Guidance"}
@@ -1568,24 +1587,24 @@ export default function App() {
                   <button
                     onClick={() => handleQuery(false)}
                     disabled={loading || !canSubmitQuery}
-                    className="flex items-center gap-2 rounded-xl bg-[#786D4B] px-5 py-3 text-sm font-bold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
+                    className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#C58A2A] px-5 py-3 text-sm font-bold text-white shadow-sm hover:bg-[#A86F1D] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                   >
                     <Sparkles className="h-4 w-4" />
                     {loadingAction === "guidance" ? "Preparing..." : "The Guidance"}
                   </button>
                 </div>
               </section>
-              {error && <p className="text-red-600">{error}</p>}
+              {error && <p className="text-[#B94A48]">{error}</p>}
 
               {loading && (
                 <section
-                  className="rounded-2xl border border-[#D9D2C5] bg-white p-5 shadow-sm"
+                  className="rounded-2xl border border-[#DED6C7] bg-white p-5 shadow-sm"
                   aria-live="polite"
                   aria-busy="true"
                 >
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex items-center gap-3">
-                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F5F2ED] text-[#5A5A40]">
+                      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#F3E4C1] text-[#1F6F68]">
                         <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" />
                       </span>
                       <div>
@@ -1597,8 +1616,8 @@ export default function App() {
                         </p>
                       </div>
                     </div>
-                    <div className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-3 py-2 text-right font-mono text-xs text-stone-500">
-                      <p className="font-bold uppercase tracking-wider text-[#5A5A40]">Elapsed</p>
+                    <div className="rounded-xl border border-[#DED6C7] bg-[#FAF8F1] px-3 py-2 text-right font-mono text-xs text-stone-500">
+                      <p className="font-bold uppercase tracking-wider text-[#1F6F68]">Elapsed</p>
                       <p className="mt-1 text-sm text-stone-700">{formatElapsed(loadingElapsedSeconds)}</p>
                     </div>
                   </div>
@@ -1608,11 +1627,11 @@ export default function App() {
               {result && (
                 <div className="space-y-5">
                   {isPreSynthesisApproval && (
-                    <section className="rounded-2xl border-2 border-[#5A5A40] bg-white p-6 shadow-sm">
-                      <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#5A5A40]">
+                    <section className="rounded-2xl border-2 border-[#1F6F68] bg-white p-4 shadow-[0_14px_45px_rgba(31,111,104,0.08)] md:p-6">
+                      <p className="font-mono text-xs font-bold uppercase tracking-wider text-[#1F6F68]">
                         {result.hitl?.approvalTitle || "Pre-Synthesis Verification"}
                       </p>
-                      <h2 className="mt-3 text-2xl italic text-stone-800">Review the retrieval plan</h2>
+                      <h2 className="mt-3 text-xl italic text-stone-800 md:text-2xl">Review the retrieval plan</h2>
                       <p className="mt-2 text-sm leading-6 text-stone-600">
                         {result.hitl?.instructions}
                       </p>
@@ -1625,7 +1644,7 @@ export default function App() {
                         value={hitlConcepts}
                         onChange={(event) => setHitlConcepts(event.target.value)}
                         readOnly={hitlSessionLocked}
-                        className="mt-2 w-full rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] px-4 py-3 text-sm outline-none focus:border-[#5A5A40] read-only:cursor-default read-only:text-stone-600"
+                        className="mt-2 w-full rounded-xl border border-[#DED6C7] bg-[#FAF8F1] px-4 py-3 text-sm outline-none focus:border-[#1F6F68] read-only:cursor-default read-only:text-stone-600"
                       />
 
                       <div className="mt-5">
@@ -1638,16 +1657,16 @@ export default function App() {
                             if (!verse?.id) return null;
                             const checked = selectedHitlVerseIds.includes(verse.id);
                             return (
-                              <label key={verse.id} className="flex gap-3 rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
+                              <label key={verse.id} className="flex gap-3 rounded-xl border border-[#DED6C7] bg-[#FAF8F1] p-3 transition hover:border-[#1F6F68] md:p-4">
                                 <input
                                   type="checkbox"
                                   checked={checked}
                                   disabled={hitlSessionLocked}
                                   onChange={() => toggleHitlVerse(verse.id)}
-                                  className="mt-1 h-4 w-4 accent-[#5A5A40]"
+                                  className="mt-1 h-4 w-4 accent-[#1F6F68]"
                                 />
                                 <span className="block">
-                                  <span className="block text-xs font-bold text-[#5A5A40]">
+                                  <span className="block text-xs font-bold text-[#1F6F68]">
                                     {verse.faith} — {verse.source} {verse.chapter}:{verse.verse}
                                     {item.score !== undefined ? ` · score ${item.score}` : ""}
                                   </span>
@@ -1682,10 +1701,10 @@ export default function App() {
                           }}
                           readOnly={hitlSessionLocked}
                           placeholder="Type to select scripture by title,text or keywords"
-                          className="mt-3 w-full rounded-xl border-2 border-[#5A5A40] bg-white px-4 py-3 text-sm outline-none read-only:cursor-default read-only:text-stone-600"
+                          className="mt-3 w-full rounded-xl border-2 border-[#1F6F68] bg-white px-4 py-3 text-sm outline-none read-only:cursor-default read-only:text-stone-600"
                         />
                         {showManualScripturePicker && !hitlSessionLocked && (
-                          <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-[#D9D2C5] bg-white shadow-sm">
+                          <div className="mt-3 max-h-64 overflow-y-auto rounded-xl border border-[#DED6C7] bg-white shadow-sm">
                             {manualScriptureMatches.length > 0 ? (
                               manualScriptureMatches.map((scripture) => {
                                 const selected = selectedManualScriptureId === scripture.id;
@@ -1698,18 +1717,18 @@ export default function App() {
                                       setManualScriptureQuery(scriptureTitle(scripture));
                                       setShowManualScripturePicker(false);
                                     }}
-                                    className={`block w-full border-b border-[#EFE8DD] px-4 py-3 text-left last:border-0 ${selected ? "bg-[#FBF9F6]" : "hover:bg-[#FBF9F6]"}`}
+                                    className={`block w-full border-b border-[#ECE4D6] px-4 py-3 text-left last:border-0 ${selected ? "bg-[#FAF8F1]" : "hover:bg-[#FAF8F1]"}`}
                                   >
                                     <span className="flex items-start justify-between gap-3">
                                       <span>
-                                        <span className="block text-xs font-bold text-[#5A5A40]">
+                                        <span className="block text-xs font-bold text-[#1F6F68]">
                                           {scriptureTitle(scripture)}
                                         </span>
                                         <span className="mt-1 block truncate text-sm italic text-stone-700">
                                           "{scripture.translation}"
                                         </span>
                                       </span>
-                                      <span className="rounded-full bg-stone-100 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-stone-600">
+                                      <span className="rounded-full bg-[#EEF7F5] px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-[#1F6F68]">
                                         {scripture.faith}
                                       </span>
                                     </span>
@@ -1727,7 +1746,7 @@ export default function App() {
                         <button
                           onClick={() => handlePreSynthesisResume("approve")}
                           disabled={loading || (selectedHitlVerseIds.length === 0 && !selectedManualScripture)}
-                          className="flex items-center gap-2 rounded-xl bg-[#5A5A40] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-60"
+                          className="flex w-full items-center justify-center gap-2 rounded-xl bg-[#1F6F68] px-5 py-3 text-sm font-bold text-white hover:bg-[#185A54] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                         >
                           <Sparkles className="h-4 w-4" />
                           {loadingAction === "compile-guidance" ? "Preparing..." : "Compile guidance"}
@@ -1735,7 +1754,7 @@ export default function App() {
                         <button
                           onClick={() => handlePreSynthesisResume("reject")}
                           disabled={loading}
-                          className="rounded-xl border border-[#D9D2C5] px-5 py-3 text-sm font-bold text-stone-600 hover:bg-[#FBF9F6] disabled:cursor-not-allowed disabled:opacity-60"
+                          className="w-full rounded-xl border border-[#DED6C7] px-5 py-3 text-sm font-bold text-stone-600 hover:bg-[#FAF8F1] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
                         >
                           {loadingAction === "cancel-guidance" ? "Cancelling..." : "Cancel"}
                         </button>
@@ -1745,13 +1764,13 @@ export default function App() {
 
                   {shouldShowWorkflowNotice(result) && (
                     // Failure states are user-facing, but internal planner/synthesizer traces stay hidden.
-                    <section className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
-                      <h3 className="mb-2 font-bold text-amber-900">
+                    <section className="rounded-2xl border border-[#E2B35F] bg-[#FFF7E8] p-4 md:p-6">
+                      <h3 className="mb-2 font-bold text-[#805A18]">
                         {resultStatusTitle(result)}
                       </h3>
-                      <p className="text-sm text-amber-900">{result.userMessage}</p>
+                      <p className="text-sm text-[#805A18]">{result.userMessage}</p>
                       {result.status === "insufficient_context" && result.topRetrievalScore !== undefined && (
-                        <p className="mt-3 font-mono text-xs text-amber-800">
+                        <p className="mt-3 font-mono text-xs text-[#805A18]">
                           Top retrieval score: {result.topRetrievalScore} (minimum required: {result.contextThreshold ?? "—"})
                         </p>
                       )}
@@ -1759,8 +1778,8 @@ export default function App() {
                   )}
 
                   {result?.previousContextUsed && result.previousContextQuestion && (
-                    <section className="rounded-2xl border border-[#D9D2C5] bg-white p-4">
-                      <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-[#5A5A40]">
+                    <section className="rounded-2xl border border-[#DED6C7] bg-white p-4">
+                      <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-[#1F6F68]">
                         Continued From Previous Dilemma
                       </p>
                       <p className="mt-2 text-sm leading-6 text-stone-700">{scrubStoredHistoryText(result.previousContextQuestion)}</p>
@@ -1768,17 +1787,17 @@ export default function App() {
                   )}
 
                   {currentPathway && result.status !== "insufficient_context" && result.status !== "quality_threshold_not_met" && (
-                    <section className="relative rounded-2xl border-2 border-[#5A5A40] bg-white p-6 shadow-sm">
-                      <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#5A5A40] px-4 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-white">
+                    <section className="relative rounded-2xl border-2 border-[#1F6F68] bg-white p-4 pt-6 shadow-[0_16px_50px_rgba(31,111,104,0.08)] md:p-6">
+                      <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full bg-[#1F6F68] px-4 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-white shadow-sm">
                         Answer
                       </div>
-                      <p className="mt-2 flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-[#5A5A40]">
+                      <p className="mt-2 flex items-center gap-2 font-mono text-xs uppercase tracking-wider text-[#1F6F68]">
                         <Sparkles className="h-3 w-3" /> Scripture-grounded guidance
                       </p>
-                      <h2 className="mt-3 text-2xl italic text-stone-800">A clear path forward</h2>
+                      <h2 className="mt-3 text-xl italic text-stone-800 md:text-2xl">A clear path forward</h2>
                       <div className="mt-5">
-                        <div className="rounded-xl border border-[#D9D2C5] bg-[#FBF9F6] p-4">
-                          <h3 className="border-b border-[#D9D2C5] pb-3 font-mono text-xs font-bold uppercase tracking-wider text-stone-700">
+                        <div className="rounded-xl border border-[#DED6C7] bg-[#FAF8F1] p-4">
+                          <h3 className="border-b border-[#DED6C7] pb-3 font-mono text-xs font-bold uppercase tracking-wider text-stone-700">
                             Summary
                           </h3>
                           <div className="mt-4 text-stone-800">
@@ -1786,11 +1805,11 @@ export default function App() {
                               <p className="text-base leading-7">{currentGuidanceDisplay.summaryText}</p>
                             )}
                             {currentGuidanceDisplay.detailSections.length > 0 && (
-                              <div className="mt-5 divide-y divide-[#E5DED2]">
+                              <div className="mt-5 divide-y divide-[#DED6C7] border-l-2 border-[#C58A2A] pl-4">
                                 {currentGuidanceDisplay.detailSections.map((section, index) => (
                                   <div key={`${section.label || "detail"}-${section.text}-${index}`} className="py-3 first:pt-0 last:pb-0">
                                     {section.label && (
-                                      <p className="text-sm font-semibold text-[#5A5A40]">
+                                      <p className="text-sm font-semibold text-[#1F6F68]">
                                         {section.label}
                                       </p>
                                     )}
@@ -1806,9 +1825,9 @@ export default function App() {
                   )}
 
                   {canSubmitFeedback && (
-                    <section className="rounded-2xl border border-[#D9D2C5] bg-white p-4">
+                    <section className="rounded-2xl border border-[#DED6C7] bg-white p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
-                        <p className="text-sm font-semibold text-[#5A5A40]">Was this guidance helpful?</p>
+                        <p className="text-sm font-semibold text-[#1F6F68]">Was this guidance helpful?</p>
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
@@ -1817,7 +1836,7 @@ export default function App() {
                             className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
                               feedbackStatus === "FOLLOWED_DHARMA"
                                 ? "border-emerald-700 bg-emerald-50 text-emerald-800"
-                                : "border-[#D9D2C5] bg-[#FBF9F6] text-[#5A5A40] hover:bg-white"
+                                : "border-[#DED6C7] bg-[#FAF8F1] text-[#1F6F68] hover:bg-white"
                             }`}
                           >
                             <CheckCircle2 className="h-4 w-4" />
@@ -1830,7 +1849,7 @@ export default function App() {
                             className={`inline-flex items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-60 ${
                               feedbackStatus === "STRAYED_FROM_PATH"
                                 ? "border-amber-700 bg-amber-50 text-amber-800"
-                                : "border-[#D9D2C5] bg-[#FBF9F6] text-[#5A5A40] hover:bg-white"
+                                : "border-[#DED6C7] bg-[#FAF8F1] text-[#1F6F68] hover:bg-white"
                             }`}
                           >
                             <MessageSquareWarning className="h-4 w-4" />
@@ -1845,13 +1864,13 @@ export default function App() {
                   )}
 
                   {!isPreSynthesisApproval && usedCitations.length > 0 && (
-                    <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+                    <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-6">
                       <h3 className="font-bold mb-3 flex items-center gap-2">
                         <BookOpen className="w-4 h-4" /> Scripture Evidence
                       </h3>
                       {usedCitations.map((c) => (
                         <div key={c.id} className="mb-4 pb-4 border-b border-stone-100 last:border-0">
-                          <p className="text-xs font-bold text-[#5A5A40]">
+                          <p className="text-xs font-bold text-[#1F6F68]">
                             {c.faith} — {c.source} {c.chapter}:{c.verse}
                           </p>
                           <p className="text-sm italic mt-1">"{c.translation}"</p>
@@ -1864,9 +1883,9 @@ export default function App() {
               )}
 
               {previousConversations.length > 0 && (
-                <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+                <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-6">
                   <h3 className="font-bold mb-4">Previous Conversation</h3>
-                  <div className="divide-y divide-[#E5DED2] rounded-xl border border-[#D9D2C5] bg-[#FBF9F6]">
+                  <div className="divide-y divide-[#DED6C7] rounded-xl border border-[#DED6C7] bg-[#FAF8F1]">
                     {previousConversations.map((item) => {
                       const safeItem = scrubStoredHistoryItem(item);
                       const responseSections = guidanceSections(safeItem.response);
@@ -1881,28 +1900,28 @@ export default function App() {
                             className="flex w-full items-start gap-3 px-4 py-3 text-left hover:bg-white"
                           >
                             {expanded ? (
-                              <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-[#5A5A40]" />
+                              <ChevronDown className="mt-1 h-4 w-4 shrink-0 text-[#1F6F68]" />
                             ) : (
-                              <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-[#5A5A40]" />
+                              <ChevronRight className="mt-1 h-4 w-4 shrink-0 text-[#1F6F68]" />
                             )}
                             <span className="min-w-0 flex-1">
                               <span className="block font-mono text-[10px] uppercase tracking-wider text-stone-400">
                                 {new Date(item.timestamp).toLocaleString()}
                               </span>
-                              <span className="mt-1 block text-sm font-semibold leading-6 text-[#5A5A40]">
+                              <span className="mt-1 block text-sm font-semibold leading-6 text-[#1F6F68]">
                                 {safeItem.question}
                               </span>
                             </span>
                           </button>
                           {expanded && (
-                            <div className="border-t border-[#E5DED2] bg-white px-5 py-4 text-sm leading-6 text-stone-800">
+                            <div className="border-t border-[#DED6C7] bg-white px-4 py-4 text-sm leading-6 text-stone-800 md:px-5">
                               {historyDisplay.summaryText && <p>{historyDisplay.summaryText}</p>}
                               {historyDisplay.detailSections.length > 0 && (
-                                <div className="mt-3 divide-y divide-[#E5DED2]">
+                                <div className="mt-3 divide-y divide-[#DED6C7]">
                                   {historyDisplay.detailSections.map((section, index) => (
                                     <div key={`${item.id}-response-${index}`} className="py-2 first:pt-0 last:pb-0">
                                       {section.label && (
-                                        <p className="text-sm font-semibold text-[#5A5A40]">
+                                        <p className="text-sm font-semibold text-[#1F6F68]">
                                           {section.label}
                                         </p>
                                       )}
@@ -1926,8 +1945,8 @@ export default function App() {
         {activeTab === "scriptures" && (
           <div className="grid gap-4 md:grid-cols-2">
             {scriptures.map((s) => (
-              <div key={s.id} className="bg-white rounded-2xl p-4 border border-[#D9D2C5]">
-                <p className="text-xs font-bold text-[#5A5A40]">{s.faith} — {s.source}</p>
+              <div key={s.id} className="bg-white rounded-2xl p-4 border border-[#DED6C7]">
+                <p className="text-xs font-bold text-[#1F6F68]">{s.faith} — {s.source}</p>
                 <p className="text-sm font-semibold">{s.chapter} {s.verse}</p>
                 <p className="text-sm italic mt-2">"{s.translation}"</p>
               </div>
@@ -1937,33 +1956,12 @@ export default function App() {
 
         {activeTab === "eco" && (
           <div className="max-w-3xl space-y-5">
-            <section className="bg-white rounded-3xl p-8 border border-[#D9D2C5]">
-              <h2 className="text-xl italic mb-4">Daily Cumulative Eco Audit</h2>
-              <div className="space-y-3 font-mono text-sm">
-                <div className="flex justify-between"><span>Total Energy</span><span>{dailyEco.totalEnergyWh.toFixed(4)} Wh</span></div>
-                <div className="flex justify-between"><span>Total CO₂</span><span>{dailyEco.totalCo2Kg.toFixed(8)} kg</span></div>
-                <div className="flex justify-between"><span>Queries Today</span><span>{dailyEco.queryCount}</span></div>
-              </div>
-            </section>
-
-            {result?.powerMetrics && (
-              <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
-                <h3 className="font-bold mb-2 flex items-center gap-2">
-                  <Leaf className="w-4 h-4 text-emerald-600" /> Per-Request Eco Metrics
-                </h3>
-                <div className="grid grid-cols-2 gap-2 text-sm font-mono">
-                  <span>Energy</span><span>{(result.powerMetrics.energyMWh / 1000).toFixed(6)} Wh</span>
-                  <span>CO₂</span><span>{result.powerMetrics.co2Kg.toFixed(8)} kg</span>
-                  <span>CPU/GPU</span><span>{result.powerMetrics.cpuWatts}W / {result.powerMetrics.gpuWatts}W</span>
-                  <span>Cache</span><span>{result.cacheHit ? "HIT" : "MISS"}</span>
-                </div>
-              </section>
-            )}
+            <h2 className="text-xl italic">Guidance Audit</h2>
 
             {result && (
-              <section className="bg-white rounded-3xl p-6 border border-[#D9D2C5]">
+              <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-6">
                 <h3 className="font-bold mb-2 flex items-center gap-2">
-                  <Shield className="w-4 h-4" /> G-Eval Audit
+                  <Shield className="w-4 h-4" /> Quality Checks
                 </h3>
                 {result.auditScores ? (
                   <>
@@ -1981,9 +1979,9 @@ export default function App() {
                         </span>
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+                    <div className="grid gap-2 mt-2 text-sm sm:grid-cols-2">
                       {Object.entries(result.auditScores.scores).map(([k, v]) => (
-                        <div key={k} className="flex justify-between"><span>{k}</span><span>{v}/5</span></div>
+                        <div key={k} className="flex justify-between"><span>{auditLabel(k)}</span><span>{v}/5</span></div>
                       ))}
                     </div>
                     <p className="text-xs text-stone-500 mt-2">{result.auditScores.rationale}</p>
@@ -2003,6 +2001,90 @@ export default function App() {
                 )}
               </section>
             )}
+
+            {result && (
+              <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-6">
+                <h3 className="font-bold mb-2 flex items-center gap-2">
+                  <BookOpen className="w-4 h-4" /> Grounding Checks
+                </h3>
+                {result.auditScores?.groundingContract ? (
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between gap-4 font-bold">
+                      <span>Grounding contract</span>
+                      <span className={result.auditScores.groundingContract.passed ? "text-emerald-700" : "text-amber-700"}>
+                        {result.auditScores.groundingContract.passed ? "PASSED" : "NEEDS REVIEW"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-4">
+                      <span>Grounded citations</span>
+                      <span>
+                        {result.auditScores.groundingContract.groundedCitationCount ?? 0}/
+                        {result.auditScores.groundingContract.citationCount ?? usedCitations.length}
+                      </span>
+                    </div>
+                    {result.auditScores.groundingContract.limitedGrounding && (
+                      <div className="flex justify-between gap-4">
+                        <span>Grounding level</span>
+                        <span className="text-amber-700">LIMITED</span>
+                      </div>
+                    )}
+                    {(result.auditScores.groundingContract.failedChecks || []).length > 0 && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
+                        {(result.auditScores.groundingContract.failedChecks || []).map((check) => (
+                          <p key={check}>{auditLabel(check)}</p>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-sm text-stone-500">Grounding checks are not available for this request.</p>
+                )}
+              </section>
+            )}
+
+            <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-8">
+              <h3 className="font-bold mb-4 flex items-center gap-2">
+                <Leaf className="w-4 h-4 text-emerald-600" /> Resource Impact
+              </h3>
+              <p className="mb-4 text-sm leading-6 text-stone-600">
+                Approximate local compute impact for transparency. Actual energy and CO2 vary by device, model state, cache hits, and runtime.
+              </p>
+              <div className="space-y-3 font-mono text-sm">
+                <div className="flex justify-between"><span>Daily Energy</span><span>{dailyEco.totalEnergyWh.toFixed(4)} Wh</span></div>
+                <div className="flex justify-between"><span>Daily CO₂</span><span>{dailyEco.totalCo2Kg.toFixed(8)} kg</span></div>
+                <div className="flex justify-between"><span>Queries Today</span><span>{dailyEco.queryCount}</span></div>
+              </div>
+            </section>
+
+            {result?.powerMetrics && (
+              <section className="bg-white rounded-3xl p-4 border border-[#DED6C7] md:p-6">
+                <h3 className="font-bold mb-2 flex items-center gap-2">
+                  <Leaf className="w-4 h-4 text-emerald-600" /> Per-Request Resource Impact
+                </h3>
+                <div className="grid gap-2 text-sm font-mono sm:grid-cols-2">
+                  <span>Per-Request Energy</span><span>{(result.powerMetrics.energyMWh / 1000).toFixed(6)} Wh</span>
+                  <span>Per-Request CO₂</span><span>{result.powerMetrics.co2Kg.toFixed(8)} kg</span>
+                  <span>CPU/GPU Estimate</span><span>{result.powerMetrics.cpuWatts}W / {result.powerMetrics.gpuWatts}W</span>
+                  <span>Cache Hit/Miss</span><span>{result.cacheHit ? "HIT" : "MISS"}</span>
+                </div>
+                {result.ecoBreakdown && result.ecoBreakdown.length > 0 && (
+                  <div className="mt-5 border-t border-[#DED6C7] pt-4">
+                    <p className="mb-3 text-xs font-bold uppercase tracking-wider text-[#1F6F68]">Stage Breakdown</p>
+                    <div className="space-y-2 text-xs font-mono">
+                      {result.ecoBreakdown.map((stage, index) => (
+                        <div key={`${stage.stage}-${index}`} className="grid gap-1 rounded-xl bg-[#FAF8F1] p-3 sm:grid-cols-4">
+                          <span className="font-bold text-stone-700">{stage.stage}</span>
+                          <span>{stage.energyWh.toFixed(6)} Wh</span>
+                          <span>{stage.co2Kg.toFixed(8)} kg CO₂</span>
+                          <span>{stage.durationMs.toFixed(0)} ms</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+
           </div>
         )}
       </main>

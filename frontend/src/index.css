@@ -3,6 +3,11 @@
 body {
   margin: 0;
   font-family: Georgia, "Times New Roman", serif;
-  background: #f5f2ed;
-  color: #2d2a26;
+  background: #faf8f1;
+  color: #26251f;
+}
+
+::selection {
+  background: #f3e4c1;
+  color: #26251f;
 }

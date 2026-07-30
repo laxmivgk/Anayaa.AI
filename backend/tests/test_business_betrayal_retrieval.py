@@ -1,6 +1,6 @@
 from app.agents.adk_workflow import _retrieval_matches_query
 from app.agents.workflow import _extract_planner_keywords
-from app.llm.generator import _build_synthesis_prompt, _synthesis_rejection_reason
+from app.llm.generator import SYNTHESIS_SYSTEM_PROMPT, _build_synthesis_prompt, _synthesis_rejection_reason
 from app.observability.g_eval_judge import _harmlessness_score
 from app.retrieval.hybrid_search import _rerank_with_overlap
 
@@ -111,15 +111,18 @@ def test_betrayal_revenge_prompt_keeps_next_step_calm_and_proportionate():
         "",
     )
 
-    assert "not to retaliate today" in prompt
-    assert "forgiveness can be a later process" in prompt
-    assert "do not frame protection as the opposite of forgiveness" in prompt
-    assert "Do not say the user should choose lawful protection rather than trying to forgive" in prompt
-    assert "Do not use the phrase lawful protection for ordinary lies or betrayal" in prompt
-    assert "write down what was said" in prompt
-    assert "Do not make law enforcement or authority escalation the default first step" in prompt
-    assert "only if the lies affect safety, work, school, housing, or reputation" in prompt
-    assert "Do not mention legal action unless" in prompt
+    assert "not to retaliate today" in SYNTHESIS_SYSTEM_PROMPT
+    assert "forgiveness can be a later process" in SYNTHESIS_SYSTEM_PROMPT
+    assert "do not frame protection as the opposite of forgiveness" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not say the user should choose lawful protection rather than trying to forgive" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not use the phrase lawful protection for ordinary lies or betrayal" in SYNTHESIS_SYSTEM_PROMPT
+    assert "speak once calmly when safe" in SYNTHESIS_SYSTEM_PROMPT
+    assert "If they do not listen" in SYNTHESIS_SYSTEM_PROMPT
+    assert "set a clear boundary" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not make law enforcement or authority escalation the default first step" in SYNTHESIS_SYSTEM_PROMPT
+    assert "only if the lies affect safety, work, school, housing, or reputation" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not mention legal action unless" in SYNTHESIS_SYSTEM_PROMPT
+    assert "not to retaliate today" not in prompt
 
 
 def test_betrayal_revenge_summary_accepts_calm_boundary_wording():

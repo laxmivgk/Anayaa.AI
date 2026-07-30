@@ -40,6 +40,14 @@ After setup, normal runtime is local/offline-first:
 anayaa serve
 ```
 
+For phone access on the same trusted Wi-Fi, run:
+
+```bash
+anayaa serve --mobile
+```
+
+Anayaa will keep models and databases on this computer, bind the app to the local network, and print a phone URL such as `http://192.168.1.23:8000`.
+
 ## Requirements
 
 - Python 3.10+
@@ -152,8 +160,9 @@ anayaa setup
 - PostgreSQL, Redis, Milvus Lite, embeddings, scripture data, and Ollama models are local.
 - Cloud LLM routing is disabled unless you explicitly configure a cloud key such as `GEMINI_API_KEY`.
 - No public server is required for normal local use.
+- `anayaa serve --mobile` exposes the app only on your trusted local network.
 
-Password reset is server-side. In local mode without SMTP, reset instructions are printed to the backend terminal. In production, set `APP_ENV=production` and configure SMTP so reset links/codes are delivered by email; terminal-only reset delivery is refused. Users must enter an email that already exists in Anayaa to receive usable reset instructions.
+Password reset is server-side and local-first. Reset instructions are printed to the backend terminal. Users must enter an email that already exists in Anayaa to receive usable reset instructions.
 
 ## Troubleshooting
 

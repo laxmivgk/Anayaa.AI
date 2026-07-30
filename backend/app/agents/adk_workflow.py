@@ -61,6 +61,9 @@ RETRY_PLANNER_SYSTEM_PROMPT = (
     "Return only valid compact JSON with keys: action, retryQuery, focusKeywords."
 )
 
+GROUNDING_FAILURE_DIMENSIONS = {"citation_grounding", "context_grounding", "grounding_contract"}
+NON_RETRYABLE_FAILURE_DIMENSIONS = {"harmlessness", "privacy"}
+
 QUERY_STOPWORDS = {
     "about",
     "after",
@@ -287,6 +290,67 @@ def _parse_retry_plan_response(raw: str) -> dict[str, Any]:
         "focusKeywords": focus_keywords,
         "reason": reason,
     }
+
+
+def _audit_failed_dimensions(audit: dict[str, Any]) -> set[str]:
+    failed = {str(name) for name in audit.get("failedDimensions", []) if str(name).strip()}
+    for name, value in (audit.get("scores") or {}).items():
+        try:
+            score = int(value)
+        except (TypeError, ValueError):
+            continue
+        if score < int(audit.get("minScore") or get_settings().audit_min_score):
+            failed.add(str(name))
+    return failed
+
+
+def _should_repair_synthesis_grounding(payload: dict[str, Any]) -> bool:
+    audit = payload.get("auditScores") or {}
+    if not audit or audit.get("passed", False):
+        return False
+    failed = _audit_failed_dimensions(audit)
+    if failed & NON_RETRYABLE_FAILURE_DIMENSIONS:
+        return False
+    if not (failed & GROUNDING_FAILURE_DIMENSIONS):
+        return False
+    return bool(payload.get("citations"))
+
+
+def _citation_repair_label(citation: dict[str, Any]) -> str:
+    parts = [
+        str(citation.get("source") or "").strip(),
+        str(citation.get("chapter") or "").strip(),
+        str(citation.get("verse") or "").strip(),
+    ]
+    return ", ".join(part for part in parts if part) or "retrieved scripture"
+
+
+def _grounding_repair_tone(payload: dict[str, Any], base_tone: str) -> str:
+    citation_requirements: list[str] = []
+    for citation in (payload.get("citations") or [])[:3]:
+        if not isinstance(citation, dict):
+            continue
+        keywords = [
+            str(keyword).strip().lower()
+            for keyword in (citation.get("keywords") or [])[:4]
+            if str(keyword).strip()
+        ]
+        anchors = ", ".join(keywords) if keywords else str(citation.get("source") or "retrieved scripture")
+        citation_requirements.append(f"{_citation_repair_label(citation)} -> {anchors}")
+
+    requirement_text = "; ".join(citation_requirements) or "each retrieved scripture source -> one anchor keyword"
+    follow_up_text = (
+        " Keep the answer tied to the previous dilemma and the follow-up question."
+        if payload.get("previousContextUsed")
+        else ""
+    )
+    repair_text = (
+        "Grounding repair mode: The previous draft failed scripture grounding. "
+        "In the Scripture grounding section only, name each retrieved source exactly and reuse at least one anchor "
+        f"word for each source: {requirement_text}. Do not mention scripture names, chapters, verses, or citation "
+        f"labels before Scripture grounding.{follow_up_text}"
+    )
+    return f"{base_tone.strip()} {repair_text}".strip() if base_tone else repair_text
 
 
 async def _plan_react_retry_with_llm(payload: dict[str, Any], dilemma: str, turn: int) -> dict[str, Any] | None:
@@ -572,6 +636,7 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
     # with an explicit status instead of inventing a deterministic backup answer.
     retry_plan = None
     retry_plan_error = None
+    grounding_repair = _should_repair_synthesis_grounding(payload)
     try:
         with _track_agent(ctx, "ReActRetryPlanner", category="llm", metadata={"turn": turn, "modelRole": "planner"}):
             retry_plan = await _plan_react_retry_with_llm(payload, dilemma, turn)
@@ -584,6 +649,10 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
         planned_keywords = retry_plan.get("focusKeywords") or []
         keywords = list(dict.fromkeys([*keywords, *planned_keywords]))[:8]
         reason = f"LLM retry planner: {retry_plan['reason']}"
+        skip_retry = False
+    elif grounding_repair:
+        react_search_query = payload.get("searchQuery") or dilemma
+        reason = "Grounding repair retry: existing citations need a clearer Scripture grounding section."
         skip_retry = False
     elif retry_plan_error:
         react_search_query = payload.get("searchQuery") or dilemma
@@ -613,6 +682,7 @@ async def _react_reason_impl(ctx, payload: dict[str, Any]) -> dict[str, Any]:
         "reactRetryPlan": retry_plan,
         "reactRetryPlanError": retry_plan_error,
         "skipRetryRetrieval": skip_retry,
+        "synthesisGroundingRepair": bool(grounding_repair and not skip_retry),
         "reactLoopLog": [
             *payload.get("reactLoopLog", []),
             f"Turn {turn} Reason: {reason}",
@@ -757,6 +827,8 @@ async def synthesize_node(ctx, node_input: dict[str, Any]) -> dict[str, Any]:
     dilemma = payload.get("dilemma") or ctx.state.get("dilemma", "")
     citations = payload.get("citations") or []
     tone_msg = payload.get("toneMsg", "")
+    if payload.get("synthesisGroundingRepair"):
+        tone_msg = _grounding_repair_tone(payload, tone_msg)
 
     try:
         with _track_agent(ctx, "Synthesizer", category="llm", metadata={"modelRole": "synthesizer"}):
@@ -1189,6 +1261,7 @@ async def run_adk_pipeline(
     hitl_enabled: bool = True,
     milvus=None,
     previous_context: dict[str, Any] | None = None,
+    use_previous_context: bool = False,
 ) -> dict[str, Any]:
     """Execute the Google ADK workflow for a user dilemma."""
     del milvus  # Milvus is accessed through the MCP server subprocess
@@ -1207,7 +1280,11 @@ async def run_adk_pipeline(
 
     # Pre-ADK rewrite/cache preview lets direct guidance return safely from cache when HITL is off.
     with latency.track("QueryRewriter", category="deterministic"):
-        rewrite = rewrite_malformed_query(dilemma, previous_context=previous_context)
+        rewrite = rewrite_malformed_query(
+            dilemma,
+            previous_context=previous_context,
+            use_previous_context=use_previous_context,
+        )
     rewritten_dilemma = rewrite["rewrittenQuery"]
     with latency.track("QueryOptimizer", category="deterministic", metadata={"phase": "pre_adk_preview"}):
         optimizer_preview = {

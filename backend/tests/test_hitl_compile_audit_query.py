@@ -41,21 +41,21 @@ def test_hitl_compile_synthesis_tone_carries_selected_concepts_and_citation_requ
 
     assert "Calm" in tone
     assert "trust, confidentiality" in tone
-    assert "name at least two selected scripture sources exactly" in tone
+    assert "name the selected scripture source(s) exactly" in tone
 
 
-def test_hitl_compile_retry_targets_grounding_failures_with_two_citations():
+def test_hitl_compile_retry_targets_grounding_failures_with_selected_citations():
     audit = {
         "passed": False,
         "failedDimensions": ["grounding_contract"],
         "groundingContract": {"failedChecks": ["citationTermsInScriptureGrounding"]},
     }
-    citations = [{"id": "a"}, {"id": "b"}]
+    citations = [{"id": "a"}]
 
     assert _should_retry_hitl_compile(audit, citations) is True
 
 
-def test_hitl_compile_retry_targets_faithfulness_failures_with_two_citations():
+def test_hitl_compile_retry_targets_faithfulness_failures_with_selected_citations():
     audit = {
         "passed": False,
         "scores": {"faithfulness": 2, "citation_grounding": 4},
@@ -67,9 +67,9 @@ def test_hitl_compile_retry_targets_faithfulness_failures_with_two_citations():
     assert _should_retry_hitl_compile(audit, citations) is True
 
 
-def test_hitl_compile_retry_does_not_override_safety_or_single_citation_failures():
+def test_hitl_compile_retry_does_not_override_safety_or_zero_citation_failures():
     safety_audit = {"passed": False, "failedDimensions": ["harmlessness"]}
     grounding_audit = {"passed": False, "failedDimensions": ["citation_grounding"]}
 
     assert _should_retry_hitl_compile(safety_audit, [{"id": "a"}, {"id": "b"}]) is False
-    assert _should_retry_hitl_compile(grounding_audit, [{"id": "a"}]) is False
+    assert _should_retry_hitl_compile(grounding_audit, []) is False

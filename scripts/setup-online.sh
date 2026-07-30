@@ -156,10 +156,10 @@ build_frontend() {
 }
 
 ensure_ollama_models() {
-  local models=(gemma2:2b qwen3:4b llama3.2:3b)
+  local models=(qwen3:4b llama3.2:3b)
 
   if ! command -v ollama >/dev/null 2>&1; then
-    warn "Ollama is not installed. Install Ollama, then run: ollama pull gemma2:2b && ollama pull qwen3:4b && ollama pull llama3.2:3b"
+    warn "Ollama is not installed. Install Ollama, then run: ollama pull qwen3:4b && ollama pull llama3.2:3b"
     return 0
   fi
 

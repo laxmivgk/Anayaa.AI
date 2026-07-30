@@ -8,10 +8,10 @@ from typing import Any
 from app.llm.router import select_model
 
 CACHE_SCHEMA_VERSION = "semantic_cache_schema_v2"
-PROMPT_VERSION = "synthesis_prompt_v9"
-PLANNER_VERSION = "llm_planner_compact_v3"
+PROMPT_VERSION = "synthesis_prompt_v13_grounding_repair_retry"
+PLANNER_VERSION = "llm_planner_compact_v4_static_prefix"
 RETRIEVAL_VERSION = "mcp_milvus_graph_rerank_v3"
-JUDGE_VERSION = "llm_judge_compact_grounding_contract_v3"
+JUDGE_VERSION = "llm_judge_compact_grounding_contract_v5_source_named"
 
 
 def cache_versions() -> dict[str, Any]:

@@ -58,7 +58,7 @@ def build_quality_failure_user_message(audit: dict[str, Any], min_score: int) ->
     if "grounding_contract" in failed_raw or "citation_grounding" in failed_raw or "context_grounding" in failed_raw:
         return (
             "Anayaa retrieved scripture citations, but the drafted guidance did not connect its final advice clearly "
-            "enough to at least two scripture passages. Try adding a little more context about the situation, or use "
+            "enough to the retrieved scripture passage(s). Try adding a little more context about the situation, or use "
             "The Interactive Guidance to choose scriptures that directly match your dilemma, then compile guidance again."
         )
 
@@ -90,7 +90,7 @@ def build_hitl_compile_failure_user_message(audit: dict[str, Any], min_score: in
     if "grounding_contract" in failed_raw or "citation_grounding" in failed_raw or "context_grounding" in failed_raw:
         return (
             "Anayaa used the scriptures selected in Interactive Guidance, but the compiled draft still did not "
-            "connect its final advice clearly enough to at least two selected passages. Select scriptures with a "
+            "connect its final advice clearly enough to the selected passage(s). Select scriptures with a "
             "closer connection to the dilemma, or add one more specific detail about the situation, then compile again."
         )
 
