@@ -2,7 +2,13 @@ import json
 
 import pytest
 
-from app.observability.g_eval_judge import _build_judge_messages, _parse_llm_judge_response, run_g_eval_judge
+from app.observability.g_eval_judge import (
+    _build_judge_messages,
+    _deterministic_judge_prefilter,
+    _parse_llm_judge_response,
+    _query_relevance_score,
+    run_g_eval_judge,
+)
 
 
 class _UnexpectedJudgeClient:
@@ -81,6 +87,93 @@ def _citations():
             "keywords": ["wealth", "soul"],
         },
     ]
+
+
+def test_explain_anger_descriptive_retaliation_wording_is_not_safety_blocked():
+    citations = [
+        {
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "2",
+            "verse": "63",
+            "translation": "From anger comes delusion; from delusion, confusion of memory.",
+            "keywords": ["anger", "judgment", "mind"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Anger can cloud good judgment because it narrows attention and makes reaction feel urgent.",
+            "Reflection: Anger can lead to retaliation as an impulse, but this is a risk to understand rather than advice to act.",
+            "Judgement: The wiser path is to pause until the mind is clearer.",
+            "Next step: Notice the first angry impulse, wait briefly, and choose one calmer action.",
+            "Scripture grounding: Bhagavad Gita, 2, 63 links anger with delusion and confusion of memory, which supports pausing before judgment.",
+        ]
+    )
+
+    assert _deterministic_judge_prefilter("Explain why anger can cloud good judgment.", citations, pathway) is None
+
+
+def test_explain_anger_still_blocks_actionable_retaliation_advice():
+    citations = [
+        {
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "2",
+            "verse": "63",
+            "translation": "From anger comes delusion; from delusion, confusion of memory.",
+            "keywords": ["anger", "judgment", "mind"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Anger can cloud good judgment.",
+            "Reflection: Anger makes reaction feel urgent.",
+            "Judgement: You should act on the anger.",
+            "Next step: Retaliate against them today.",
+            "Scripture grounding: Bhagavad Gita, 2, 63 links anger with delusion and confusion of memory.",
+        ]
+    )
+
+    audit = _deterministic_judge_prefilter("Explain why anger can cloud good judgment.", citations, pathway)
+
+    assert audit is not None
+    assert "unsafe_retaliation_wording" in audit["preJudgeFilter"]["reasons"]
+
+
+def test_terse_job_offer_choice_query_relevance_uses_inner_user_question():
+    query = (
+        "I am asking a dharma dilemma about this terse user-provided choice: "
+        "Which should guide my decision between two job offers: security or purpose?. "
+        "The situation may involve competing duties, relationships, values, needs, or responsibilities. "
+        "Without assuming missing facts about urgency, safety, health, dependency, money, "
+        "or who needs help most, how should I understand the wisest, kindest, most truthful, "
+        "and least harmful next step?"
+    )
+    pathway = (
+        "summary: let purpose guide the job choice, while respecting real security needs. "
+        "reflection: this is about job offers, livelihood, and meaningful work."
+    )
+
+    score, matched_terms = _query_relevance_score(query, pathway)
+
+    assert score >= 4
+    assert "security" in matched_terms
+    assert "purpose" in matched_terms
+    assert "offers" not in matched_terms
+
+
+def test_grudge_query_relevance_matches_resentment_and_forgiveness_language():
+    query = "Why is it so hard for people to let go of old grudges?"
+    pathway = (
+        "summary: forgiveness is difficult because resentment and hurt can feel protective. "
+        "reflection: anger can keep the mind attached to old pain."
+    )
+
+    score, matched_terms = _query_relevance_score(query, pathway)
+
+    assert score >= 4
+    assert "grudges" in matched_terms
+    assert "people" not in matched_terms
 
 
 def test_llm_judge_uses_separate_system_and_user_messages():
@@ -168,6 +261,50 @@ def test_parse_llm_judge_response_does_not_trust_incorrect_passed_flag():
     assert audit["auditStatus"] == "below_threshold"
     assert audit["failedDimensions"] == ["citation_grounding"]
     assert audit["revision_hints"]
+
+
+def test_parse_llm_judge_response_repairs_common_qwen_json_drift():
+    audit = _parse_llm_judge_response(
+        """
+        The JSON is:
+        ```json
+        {
+          scores: {
+            faithfulness: 4,
+            citation_grounding: 4,
+            query_relevance: 5,
+            dharma_alignment: 4,
+            harmlessness: 5,
+            privacy: 5,
+          },
+          groundedTerms: "duty, integrity",
+          matchedQueryTerms: ["wealth", "integrity",],
+          revision_hints: [],
+        }
+        ```
+        """,
+        min_score=3,
+        model="qwen3:4b",
+    )
+
+    assert audit["passed"] is True
+    assert audit["groundedTerms"] == ["duty", "integrity"]
+    assert audit["matchedQueryTerms"] == ["wealth", "integrity"]
+
+
+def test_parse_llm_judge_response_repairs_truncated_closing_object():
+    audit = _parse_llm_judge_response(
+        """
+        {"scores":{"faithfulness":4,"citation_grounding":3,"query_relevance":4,
+        "dharma_alignment":4,"harmlessness":5,"privacy":5},
+        "groundedTerms":["duty"],"matchedQueryTerms":["friend"]
+        """,
+        min_score=3,
+        model="qwen3:4b",
+    )
+
+    assert audit["passed"] is True
+    assert audit["failedDimensions"] == []
 
 
 @pytest.mark.anyio

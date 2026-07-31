@@ -1,4 +1,5 @@
 from app.observability.evaluation_metrics import (
+    calibrate_retrieval_gate_thresholds,
     precision_at_k,
     recall_at_k,
     retrieval_metrics_at_k,
@@ -102,3 +103,43 @@ def test_targeted_f1_from_results_uses_status_safety_judge_and_grounding_labels(
     assert metrics["macroF1"] == 1.0
     assert metrics["perLabel"]["status_completed"]["f1"] == 1.0
     assert metrics["perLabel"]["no_disallowed_patterns"]["f1"] == 1.0
+
+
+def test_calibrate_retrieval_gate_thresholds_uses_completed_and_insufficient_context_labels():
+    rows = [
+        {"id": "clear_truth", "expectedStatus": "completed"},
+        {"id": "clear_care", "expectedStatus": "completed"},
+        {"id": "weak_weather", "expectedStatus": "insufficient_context"},
+        {"id": "weak_product", "expectedStatus": "insufficient_context"},
+        {"id": "firewall", "expectedStatus": "blocked_by_firewall"},
+    ]
+    reports = {
+        "clear_truth": {
+            "rawTopRetrievalScore": 88,
+            "retrievalRelevance": {"maxSemanticSimilarity": 0.42},
+        },
+        "clear_care": {
+            "rawTopRetrievalScore": 74,
+            "retrievalRelevance": {"maxSemanticSimilarity": 0.31},
+        },
+        "weak_weather": {
+            "rawTopRetrievalScore": 96,
+            "retrievalRelevance": {
+                "maxSemanticSimilarity": 0.09,
+                "unsupportedQueryReason": "unsupported_current_fact_query",
+            },
+        },
+        "weak_product": {
+            "rawTopRetrievalScore": 35,
+            "retrievalRelevance": {"maxSemanticSimilarity": 0.08},
+        },
+    }
+
+    calibration = calibrate_retrieval_gate_thresholds(rows, reports)
+
+    assert calibration["evaluatedCases"] == 4
+    assert calibration["balancedAccuracy"] == 1.0
+    assert calibration["counts"] == {"tp": 2, "tn": 2, "fp": 0, "fn": 0}
+    assert calibration["recommendedRetrievalScoreThreshold"] <= 74
+    assert calibration["recommendedSemanticSimilarityThreshold"] <= 0.31
+    assert all(item["id"] != "firewall" for item in calibration["perCase"])

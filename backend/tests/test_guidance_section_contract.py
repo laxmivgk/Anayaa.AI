@@ -6,7 +6,9 @@ from app.llm.generator import (
     _build_synthesis_prompt,
     _clean_synthesis_output,
     _is_caregiver_burnout_dilemma,
+    _query_focus_terms,
     _relationship_role_groups,
+    _repair_synthesis_sections,
     _should_reject_synthesis,
     _synthesis_rejection_reason,
     generate_moral_pathway,
@@ -31,17 +33,538 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
 
     assert "Judgement: say what choice seems wisest and kindest, without naming scripture sources" in SYNTHESIS_SYSTEM_PROMPT
     assert "Next step: give a useful small sequence" in SYNTHESIS_SYSTEM_PROMPT
-    assert "one concrete action, one preparation detail" in SYNTHESIS_SYSTEM_PROMPT
+    assert "one concrete action, one way to prepare" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Do not use literal sublabels such as Preparation detail or Calm follow-through" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Only mention another person listening or not listening when the dilemma confirms" in SYNTHESIS_SYSTEM_PROMPT
     assert "Do not make the whole Next step only writing, documenting, or gathering evidence" in SYNTHESIS_SYSTEM_PROMPT
-    assert "Citation anchors:" in prompt
+    assert "do not treat secrecy as absolute" in SYNTHESIS_SYSTEM_PROMPT
+    assert "minimum necessary information" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Citation cards:" in prompt
+    assert "Source: Isha Upanishad, Chapter 1, Verse 1" in prompt
+    assert "Passage: \"All this is enveloped by the Divine.\"" in prompt
+    assert "Deterministic output skeleton:" in prompt
+    assert "Required citation anchors:" in prompt
     assert "Isha Upanishad, Chapter 1, Verse 1 anchors: stewardship, renunciation" in prompt
-    assert "name every exact source from Citation anchors and reuse at least one anchor keyword from each" in SYNTHESIS_SYSTEM_PROMPT
+    assert "name every exact source from Required citation anchors and reuse at least one anchor keyword from each" in SYNTHESIS_SYSTEM_PROMPT
     assert "Keep scripture names, chapter numbers, verse numbers, and citation labels only in Scripture grounding" in SYNTHESIS_SYSTEM_PROMPT
     assert "never mix sources" in SYNTHESIS_SYSTEM_PROMPT
     assert "if a sentence quotes or references Romans, the sentence subject must be Romans or Holy Bible" in SYNTHESIS_SYSTEM_PROMPT
     assert "Write exactly these 5 labeled sections" not in prompt
     assert "Start with a practical verb" not in prompt
     assert "situation-specific moral stance" not in SYNTHESIS_SYSTEM_PROMPT
+
+
+def test_terse_job_offer_choice_uses_user_terms_for_synthesis_relevance():
+    dilemma = (
+        "I am asking a dharma dilemma about this terse user-provided choice: "
+        "Which should guide my decision between two job offers: security or purpose?. "
+        "The situation may involve competing duties, relationships, values, needs, or responsibilities. "
+        "Without assuming missing facts about urgency, safety, health, dependency, money, "
+        "or who needs help most, how should I understand the wisest, kindest, most truthful, "
+        "and least harmful next step?"
+    )
+    citations = [
+        {
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but not to the fruits.",
+            "keywords": ["duty", "work", "purpose", "responsibility"],
+        },
+        {
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 15",
+            "verse": "Verse 204",
+            "translation": "Contentment is the greatest wealth.",
+            "keywords": ["contentment", "security", "wealth"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Let purpose guide the choice, but do not ignore real security needs in the job offers.",
+            "Reflection: This is a tension between stable livelihood and meaningful work.",
+            "Judgement: Choose the offer that lets you meet responsibilities while staying close to honest purpose.",
+            "Next step: Compare the two offers by basic needs, growth, and the duty you can perform well.",
+            "Scripture grounding: Bhagavad Gita, Chapter 2, Verse 47 emphasizes duty and work. Dhammapada, Chapter 15, Verse 204 emphasizes contentment and security.",
+        ]
+    )
+
+    focus_terms = _query_focus_terms(dilemma)
+
+    assert "security" in focus_terms
+    assert "purpose" in focus_terms
+    assert "terse" not in focus_terms
+    assert "offers" not in focus_terms
+    assert _synthesis_rejection_reason(dilemma, citations, pathway) == ""
+
+    repaired = _repair_synthesis_sections(dilemma, citations, pathway)
+
+    assert "security alongside purpose" in repaired
+    assert "act responsibly and meaningfully" in repaired
+    assert "without making claims beyond the retrieved passages" not in repaired
+    assert "without inventing more than the passage provides" not in repaired
+
+
+def test_grudge_explanation_allows_resentment_and_forgiveness_language():
+    dilemma = (
+        "I am asking a dharma dilemma about this user-provided situation: "
+        "Why is it so hard for people to let go of old grudges?. "
+        "Without inventing missing facts, what is the wisest, kindest, most truthful, "
+        "and least harmful way to understand or act?"
+    )
+    citations = [
+        {
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 1",
+            "verse": "Verse 5",
+            "translation": "Hatred is never appeased by hatred; by non-hatred alone is hatred appeased.",
+            "keywords": ["hatred", "forgiveness", "compassion"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Old grudges are hard to release because resentment can feel like protection.",
+            "Reflection: Hurt can keep anger active even when forgiveness would bring more peace.",
+            "Judgement: The wiser path is to loosen resentment without pretending the hurt never happened.",
+            "Next step: Notice one memory that still tightens your mind, then choose one calm act of release today.",
+            "Scripture grounding: Dhammapada, Chapter 1, Verse 5 emphasizes hatred and forgiveness, which supports loosening resentment instead of feeding old anger.",
+        ]
+    )
+
+    focus_terms = _query_focus_terms(dilemma)
+
+    assert "people" not in focus_terms
+    assert "grudges" in focus_terms
+    assert _synthesis_rejection_reason(dilemma, citations, pathway) == ""
+
+
+def test_confidentiality_safety_dilemma_uses_limited_disclosure_template():
+    citations = [
+        {
+            "id": "i1",
+            "faith": "Islam",
+            "source": "Quran",
+            "chapter": "Ma'idah (5)",
+            "verse": "Verse 8",
+            "translation": "Stand firm for justice, as witnesses, even if it is against yourselves.",
+            "keywords": ["justice", "truth", "responsibility"],
+        },
+        {
+            "id": "c1",
+            "faith": "Christianity",
+            "source": "Holy Bible: Matthew",
+            "chapter": "Chapter 7",
+            "verse": "Verse 12",
+            "translation": "Do to others what you would have them do to you.",
+            "keywords": ["care", "neighbor", "harm"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Keeping a friend's secret is always loyal.",
+            "Reflection: You feel torn about whether to break confidence.",
+            "Judgement: Keep the secret unless you feel uncomfortable.",
+            "Next step: Say nothing for now and hope the situation improves.",
+            "Scripture grounding: The retrieved scriptures support care.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(
+        "A friend told me a secret, but keeping it may let someone else get hurt. Should I break confidentiality?",
+        citations,
+        pathway,
+    )
+
+    assert "Do not treat confidentiality as absolute" in repaired
+    assert "protect safety with the least necessary disclosure" in repaired
+    assert "risk is serious or immediate" in repaired
+    assert "minimum necessary facts" in repaired
+    assert "confidential guidance" in repaired
+    assert "limited, responsible disclosure" in repaired
+    assert "broadcast" not in repaired
+    assert "Quran, Ma'idah (5), Verse 8 emphasizes justice and truth" in repaired
+    assert "Holy Bible: Matthew, Chapter 7, Verse 12 emphasizes care and neighbor" in repaired
+    assert _synthesis_rejection_reason(
+        "A friend told me a secret, but keeping it may let someone else get hurt. Should I break confidentiality?",
+        citations,
+        repaired,
+    ) == ""
+
+
+def test_follow_up_friend_truth_silence_uses_repair_without_pressure_template():
+    citations = [
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 16",
+            "verse": "Verse 2",
+            "translation": "Truthfulness, absence of anger, renunciation, peacefulness...",
+            "keywords": ["truthfulness", "peace", "restraint"],
+        },
+        {
+            "id": "b1",
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 1",
+            "verse": "Verse 5",
+            "translation": "Hatred is never appeased by hatred; by non-hatred alone is hatred appeased.",
+            "keywords": ["non-hatred", "patience", "friendship"],
+        },
+    ]
+    dilemma = (
+        "Previous dilemma: I lied to my close friend and feel guilty. What should I do? "
+        "Follow-up question: I told the truth, but my friend stopped talking to me. What should I do now?"
+    )
+    pathway = "\n".join(
+        [
+            "Summary: Keep trying until your friend understands you.",
+            "Reflection: This is frustrating because you already told the truth.",
+            "Judgement: The best choice is to convince your friend to respond.",
+            "Next step: Send several messages explaining why you lied and ask them to stop ignoring you.",
+            "Scripture grounding: The retrieved scriptures support honesty.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(dilemma, citations, pathway)
+
+    assert "accountability without pressure" in repaired
+    assert "give your friend space" in repaired
+    assert "one short message" in repaired
+    assert "stop repeating the apology" in repaired
+    assert "one gentle check-in" in repaired
+    assert "forcing a response" in repaired
+    assert "Send several messages" not in repaired
+    assert "convince your friend" not in repaired
+    assert "Bhagavad Gita, Chapter 16, Verse 2 emphasizes truthfulness and peace" in repaired
+    assert "Dhammapada, Chapter 1, Verse 5 emphasizes non-hatred and patience" in repaired
+    assert _synthesis_rejection_reason(dilemma, citations, repaired) == ""
+
+
+def test_repair_replaces_invented_conversation_next_step_for_patience_query():
+    citations = [
+        {
+            "id": "b5",
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 20 (Magga Vagga)",
+            "verse": "Verse 276",
+            "translation": "You yourselves must strive; the Buddhas only point the way.",
+            "keywords": ["responsibility", "effort", "action", "guidance"],
+        },
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but you are not entitled to the fruits.",
+            "keywords": ["work", "duty", "results", "detachment"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Patience matters when things don't go my way.",
+            "Reflection: I feel frustrated when outcomes do not match my hopes.",
+            "Judgement: Choose responsibility and steady effort instead of anxiety about outcomes.",
+            "Next step: Today, I will call a trusted friend or family member who can offer emotional support. If they do not listen, I will follow up with another trusted person.",
+            "Scripture grounding: The Dhammapada's emphasis on personal responsibility and the other person guidance on working with dedication offer valuable insights.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections("Why patience matters when things don't go my way?", citations, pathway)
+
+    assert "trusted friend or family member" not in repaired
+    assert "they do not listen" not in repaired
+    assert "pause for one minute" in repaired
+    assert "Dhammapada, Chapter 20 (Magga Vagga), Verse 276 emphasizes responsibility and effort" in repaired
+    assert "Bhagavad Gita, Chapter 2, Verse 47 emphasizes work and duty" in repaired
+    assert "the other person guidance" not in repaired
+
+
+def test_repair_replaces_template_support_next_step_for_self_regulation_query():
+    citations = [
+        {
+            "id": "b5",
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 20 (Magga Vagga)",
+            "verse": "Verse 276",
+            "translation": "You yourselves must strive; the Buddhas only point the way.",
+            "keywords": ["responsibility", "effort", "action", "guidance"],
+        },
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but you are not entitled to the fruits.",
+            "keywords": ["work", "duty", "results", "detachment"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Patience matters when things don't go my way.",
+            "Reflection: I feel stuck when plans fail.",
+            "Judgement: Choose steady effort instead of anxiety about outcomes.",
+            "Next step: Today, I will call a trusted friend or family member who can offer emotional support and help me brainstorm ways to move forward. Preparation detail: Before calling, I'll take a few minutes to collect my thoughts and identify what specific challenges I'm facing. Calm follow-through if it does not improve: If the conversation doesn't lead to immediate solutions, I will focus on taking small, manageable steps towards my goals.",
+            "Scripture grounding: The citations support responsibility and work.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections("Why should I be patient when things don't go my way?", citations, pathway)
+
+    assert "trusted friend or family member" not in repaired
+    assert "Preparation detail" not in repaired
+    assert "Calm follow-through" not in repaired
+    assert "brainstorm ways" not in repaired
+    assert "pause for one minute" in repaired
+    assert "one small duty" in repaired
+
+
+def test_repair_uses_gift_specific_next_step_for_time_or_money_choice():
+    citations = [
+        {
+            "id": "c1",
+            "faith": "Christianity",
+            "source": "Holy Bible: Matthew",
+            "chapter": "Chapter 16",
+            "verse": "Verse 26",
+            "translation": "What good will it be for someone to gain the whole world, yet forfeit their soul?",
+            "keywords": ["integrity", "greed"],
+        },
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but you are not entitled to the fruits.",
+            "keywords": ["duty", "karma"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Choose time over money when someone already has everything.",
+            "Reflection: This is about giving care rather than proving value through wealth.",
+            "Judgement: The wiser choice is presence, unless a practical need makes money kinder.",
+            "Next step: Today, I will call a trusted friend or family member who can offer emotional support and help me brainstorm ways to move forward.",
+            "Scripture grounding: The citations support taking the next right action patiently.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(
+        "What should I choose to give someone who has everything: time or money?",
+        citations,
+        pathway,
+    )
+
+    assert "trusted friend or family member" not in repaired
+    assert "pause for one minute" not in repaired
+    assert "shared meal" in repaired
+    assert "personal note" in repaired
+    assert "care rather than price" in repaired
+    assert "material value alone" in repaired
+    assert "patiently while staying responsible" not in repaired
+
+
+def test_scripture_grounding_uses_investment_risk_wording_for_all_in_opportunity_query():
+    citations = [
+        {
+            "id": "c1",
+            "faith": "Christianity",
+            "source": "Holy Bible: Matthew",
+            "chapter": "Chapter 6",
+            "verse": "Verse 34",
+            "translation": "Do not worry about tomorrow, for tomorrow will worry about itself.",
+            "keywords": ["anxiety", "future", "trust"],
+        },
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but not to the fruits.",
+            "keywords": ["duty", "results", "choice"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: It is usually unwise to invest everything in one opportunity without weighing risk and duty.",
+            "Reflection: A single opportunity can feel urgent when hope and fear are both strong.",
+            "Judgement: The wiser path is restraint, clarity, and protecting real needs before committing everything.",
+            "Next step: List what you cannot afford to lose, then compare the opportunity with your duties and needs.",
+            "Scripture grounding: The retrieved scriptures support care and responsibility.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(
+        "Explain whether it's wise to invest everything I have in one opportunity.",
+        citations,
+        pathway,
+    )
+
+    assert "wealth and opportunity with restraint" in repaired
+    assert "weighing risk, duty, and real needs" in repaired
+    assert "before committing everything" in repaired
+    assert "real choice in front of the user" not in repaired
+    assert "without making claims beyond the retrieved passages" not in repaired
+
+
+def test_scripture_grounding_uses_truthfulness_wording_for_repeated_lying_query():
+    citations = [
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 16",
+            "verse": "Verse 2",
+            "translation": "Truthfulness, absence of anger, renunciation, peacefulness...",
+            "keywords": ["truthfulness", "honesty"],
+        },
+        {
+            "id": "b1",
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 1",
+            "verse": "Verse 1",
+            "translation": "Mind precedes all things.",
+            "keywords": ["mind", "habit"],
+        },
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: People may keep lying after being caught because fear and habit can feel safer than accountability.",
+            "Reflection: Being caught does not always change the inner impulse that protects pride or avoids consequences.",
+            "Judgement: The wiser path is truth, responsibility, and repair before the habit causes more harm.",
+            "Next step: Name the specific truth being avoided, then make one honest correction today.",
+            "Scripture grounding: The retrieved scriptures support honesty and responsibility.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(
+        "Why do people keep lying even after they've been caught once?",
+        citations,
+        pathway,
+    )
+
+    assert "repeated falsehood" in repaired
+    assert "honesty, accountability, and repair" in repaired
+    assert "real choice in front of the user" not in repaired
+    assert "without making claims beyond the retrieved passages" not in repaired
+
+
+def test_follow_up_ai_moral_decision_grounding_does_not_inherit_lying_category_or_redaction_prefixes():
+    citations = [
+        {
+            "id": "h2",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 3",
+            "verse": "Verse 35",
+            "translation": "Better is one's own duty, though imperfect, than another's duty well performed.",
+            "keywords": ["identity", "path"],
+        },
+        {
+            "id": "i1",
+            "faith": "Islam",
+            "source": "[NAME_REDACTED]Quran",
+            "chapter": "[NAME_REDACTED]Ma'idah (5)",
+            "verse": "Verse 8",
+            "translation": "Stand firm for justice, as witnesses to Allah, even if it is against yourselves.",
+            "keywords": ["justice", "equity"],
+        },
+    ]
+    dilemma = (
+        "Previous dilemma: Why do people keep lying even after they've been caught once? "
+        "Follow-up question: Explain whether it's okay to let an AI make moral decisions for you."
+    )
+    pathway = "\n".join(
+        [
+            "Summary: AI can help you reflect, but it should not replace your moral responsibility.",
+            "Reflection: The question is about whether a tool can carry conscience for a person.",
+            "Judgement: Use AI for perspective, but keep the final ethical choice with a responsible human.",
+            "Next step: Ask AI for options, then compare them with justice, duty, and the people affected.",
+            "Scripture grounding: The retrieved scriptures support honesty and responsibility.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections(dilemma, citations, pathway)
+
+    assert "Quran, Ma'idah (5), Verse 8 emphasizes justice and equity" in repaired
+    assert "the other personQuran" not in repaired
+    assert "the other personMa'idah" not in repaired
+    assert "[NAME_REDACTED]" not in repaired
+    assert "using AI as a tool for reflection" in repaired
+    assert "moral responsibility, justice, and accountability" in repaired
+    assert "repeated falsehood" not in repaired
+
+
+def test_repair_uses_topic_aware_next_step_for_explanation_query():
+    citations = [
+        {
+            "id": "b5",
+            "faith": "Buddhism",
+            "source": "Dhammapada",
+            "chapter": "Chapter 20 (Magga Vagga)",
+            "verse": "Verse 276",
+            "translation": "You yourselves must strive; the Buddhas only point the way.",
+            "keywords": ["responsibility", "effort", "action", "guidance"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Patience means steady effort when outcomes are not under your control.",
+            "Reflection: The question is about understanding patience, not resolving a conflict with another person.",
+            "Judgement: Learn patience as a practice of effort without panic.",
+            "Next step: Today, I will call a trusted friend or family member who can offer emotional support and help me brainstorm ways to move forward. Preparation detail: Before calling, I'll take a few minutes to collect my thoughts. Calm follow-through if it does not improve: If the conversation doesn't lead to immediate solutions, I will focus on small steps.",
+            "Scripture grounding: The citation supports responsibility.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections("Explain patience in simple words", citations, pathway)
+
+    assert "trusted friend or family member" not in repaired
+    assert "Preparation detail" not in repaired
+    assert "Calm follow-through" not in repaired
+    assert "pause for one minute before reacting" not in repaired
+    assert "connect patience" in repaired
+    assert "one concrete situation" in repaired
+
+
+def test_repair_strips_next_step_template_sublabels_without_replacing_good_step():
+    citations = [
+        {
+            "id": "h1",
+            "faith": "Hinduism",
+            "source": "Bhagavad Gita",
+            "chapter": "Chapter 2",
+            "verse": "Verse 47",
+            "translation": "You have a right to perform your prescribed duties, but not to the fruits.",
+            "keywords": ["work", "duty"],
+        }
+    ]
+    pathway = "\n".join(
+        [
+            "Summary: Choose honest work without clinging to results.",
+            "Reflection: The pressure is about outcome anxiety.",
+            "Judgement: Do the duty that can be done cleanly.",
+            "Next step: Choose one honest task to complete today. Preparation detail: Set aside ten quiet minutes. Calm follow-through if it does not improve: Return to the task without forcing the result.",
+            "Scripture grounding: The citation supports duty.",
+        ]
+    )
+
+    repaired = _repair_synthesis_sections("What is duty without attachment?", citations, pathway)
+
+    assert "Preparation detail" not in repaired
+    assert "Calm follow-through" not in repaired
+    assert "Choose one honest task" in repaired
+    assert "Set aside ten quiet minutes" in repaired
 
 
 def test_synthesis_prompt_preserves_confirmed_friend_role_after_pii_redaction():
@@ -96,6 +619,7 @@ def test_caregiver_burnout_prompt_prioritizes_support_over_business_finances():
     assert "parent-care coverage" in SYNTHESIS_SYSTEM_PROMPT
     assert "local emergency or crisis support now" in SYNTHESIS_SYSTEM_PROMPT
     assert "never print [NAME_REDACTED] in final guidance" in SYNTHESIS_SYSTEM_PROMPT
+    assert "Parent-care wording is allowed because the dilemma is about caregiving duties." in prompt
 
 
 def test_caregiver_burnout_support_first_answer_passes_relevance_guardrail():
@@ -156,6 +680,95 @@ def test_caregiver_burnout_guard_accepts_natural_support_and_risk_wording():
         ],
         pathway,
     ) == ""
+
+
+def test_caregiver_follow_up_allows_parent_role_from_previous_dilemma_context():
+    dilemma = (
+        "Previous dilemma: I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted. "
+        "Follow-up question: I don't have anyone to share my duties. What should I do?"
+    )
+    pathway = "\n".join(
+        [
+            "Summary: You need immediate shared support, not more silent endurance.",
+            "Reflection: Caring for your parent while exhausted can make every duty feel impossible.",
+            "Judgement: The wisest choice is to ask one real person for concrete help today and pause non-urgent business decisions.",
+            "Next step: Call a trusted person and ask for one specific relief action, such as sitting with your parent, bringing a meal, or helping call a doctor or respite resource. If you cannot stay safe, contact local emergency or crisis support now.",
+            "Scripture grounding: Dhammapada supports steadying the mind before action, which fits asking for support and rest before deciding next steps.",
+        ]
+    )
+
+    assert _relationship_role_groups(dilemma) == {"parent"}
+    assert _synthesis_rejection_reason(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "translation": "Mind precedes all things.",
+                "keywords": ["mind", "peace"],
+            }
+        ],
+        pathway,
+    ) == ""
+
+
+def test_caregiver_burnout_allows_tentative_family_helper_without_role_drift():
+    dilemma = (
+        "I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted."
+    )
+    pathway = "\n".join(
+        [
+            "Summary: You need support today, not more pressure.",
+            "Reflection: Caring for your parent while exhausted can feel impossible.",
+            "Judgement: Ask for help before making business decisions.",
+            "Next step: Call a trusted relative or your sibling if available and ask them to cover one parent-care task today. If you cannot stay safe, contact emergency or crisis support now.",
+            "Scripture grounding: Dhammapada supports steadying the mind before action, which fits asking for support and rest before deciding next steps.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "translation": "Mind precedes all things.",
+                "keywords": ["mind", "peace"],
+            }
+        ],
+        pathway,
+    ) == ""
+
+
+def test_caregiver_burnout_still_rejects_unrelated_role_as_claimed_fact():
+    dilemma = (
+        "I have taken on the care of my sick parent while trying to manage a failing business. "
+        "I feel entirely burned out, hopeless, and physically exhausted."
+    )
+    pathway = "\n".join(
+        [
+            "Summary: You need support today, not more pressure.",
+            "Reflection: Your spouse is clearly responsible for helping, and that is why you feel abandoned.",
+            "Judgement: Ask for help before making business decisions.",
+            "Next step: Call one trusted person today and ask for one parent-care task to be covered. If you cannot stay safe, contact emergency or crisis support now.",
+            "Scripture grounding: Dhammapada supports steadying the mind before action, which fits asking for support and rest before deciding next steps.",
+        ]
+    )
+
+    assert _synthesis_rejection_reason(
+        dilemma,
+        [
+            {
+                "faith": "Buddhism",
+                "source": "Dhammapada",
+                "translation": "Mind precedes all things.",
+                "keywords": ["mind", "peace"],
+            }
+        ],
+        pathway,
+    ) == "unsupported_relationship_drift"
 
 
 def test_next_step_prompt_handles_not_listening_with_boundary_not_only_documentation():

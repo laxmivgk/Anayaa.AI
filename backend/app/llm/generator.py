@@ -22,6 +22,11 @@ DHARMA_FRAME_RE = re.compile(
     r"and least harmful way to understand or act\?\s*$",
     re.I,
 )
+TERSE_CHOICE_FRAME_RE = re.compile(
+    r"^I am asking a dharma dilemma about this terse user-provided choice:\s*(?P<situation>.*?)"
+    r"\.\s*The situation may involve competing duties, relationships, values, needs, or responsibilities\.",
+    re.I,
+)
 IDENTITY_FRAME_RE = re.compile(
     r"^I am asking a dharma dilemma about (?P<situation>who I am beyond roles and labels):\s*"
     r"how should I understand (?P<terms>.*?)\?\s*$",
@@ -51,16 +56,27 @@ DETAIL_LABEL_RE = re.compile(
 )
 PROMPT_ECHO_LINE_RE = re.compile(
     r"^(?:"
+    r"Task:|"
+    r"Rules:|"
+    r"Context package:|"
+    r"Compact dilemma:|"
     r"Dilemma:|"
     r"Must stay focused on these user-topic words:|"
     r"User-topic words:|"
     r"Tone mode:|"
     r"Relationship context:|"
     r"Retrieved scriptures:|"
+    r"Citation cards:|"
     r"Citation anchors:|"
+    r"Required citation anchors:|"
+    r"Deterministic output skeleton:|"
+    r"Output skeleton:|"
     r"\d+\.\s*\[[^\]]+\]\s+.+|"
     r"\d+\.\s*.+\s+anchors:\s*.+|"
+    r"\d+\.\s*Source:\s*.+|"
+    r"\s*(?:Faith|Passage|Anchors to reuse|Principle):\s*.+|"
     r"Write exactly these \d+ labeled sections\b|"
+    r"Fill only the text after each label\b|"
     r"Use simple everyday words\b|"
     r"Each title must be visible\b|"
     r"Only make claims supported by\b|"
@@ -94,6 +110,10 @@ PROMPT_LIKE_RESPONSE_RE = re.compile(
 FOCUS_TERM_ALIASES = {
     "disciplined": ["discipline", "self-control"],
     "discipline": ["disciplined", "self-control"],
+    "grudge": ["grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "grudges": ["grudge", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentment": ["grudge", "grudges", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentments": ["grudge", "grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
     "scamming": ["scam"],
     "scam": ["scamming"],
 }
@@ -132,19 +152,28 @@ SYNTHESIS_SYSTEM_PROMPT = (
     "Do not invent facts, motives, outcomes, citations, verse meanings, or personal details. "
     "If the dilemma is short or vague, say only what can be safely inferred and keep the guidance general. "
     "Write exactly these 5 labeled sections, 210 words or fewer total. "
+    "Do not design a new structure; fill only the deterministic skeleton from the user message. "
+    "Do not print bracketed helper text from the skeleton. "
     "Use simple everyday words. Each title must be visible at the start of its own line: "
     "One-line summary: answer the dilemma directly in one compact sentence. "
     "Reflection: explain the feeling or conflict in simple words, without blaming the user. "
     "Judgement: say what choice seems wisest and kindest, without naming scripture sources, chapters, verses, or citation labels. "
-    "Next step: give a useful small sequence the user can take today: one concrete action, one preparation detail, "
-    "and one calm follow-through if the other person does not listen or the situation does not improve. "
+    "Next step: give a useful small sequence the user can take today in plain prose: one concrete action, one way to prepare, "
+    "and one calm follow-through if the situation still feels hard or does not improve. Do not use literal sublabels such as "
+    "Preparation detail or Calm follow-through. "
+    "Only mention another person listening or not listening when the dilemma confirms a relationship, workplace, family, "
+    "or caregiving conflict. For patience, discipline, identity, anxiety, or other self-regulation questions, make the "
+    "Next step an inner practice plus one small duty or action, not a conversation plan. "
     "Do not make the whole Next step only writing, documenting, or gathering evidence; use notes only to support "
     "a real-world conversation, boundary, repair, protection, or ethical choice. "
+    "For follow-up friendship repair after the user told the truth, apologized, or tried to repair harm and the friend stopped talking, "
+    "do not tell the user to keep pushing. The Next step should be one short accountable message, then respectful space, "
+    "with one later gentle check-in if appropriate. "
     "For business, money, workplace, or unfair-treatment dilemmas, include a specific constructive conversation "
     "or accountability move plus a brief fact-recording/protection detail when useful. "
-    "Scripture grounding: write 1-2 plain sentences explaining how the retrieved scripture supports the advice; "
-    "name every exact source from Citation anchors and reuse at least one anchor keyword from each. "
-    "When two or more citations are available, name at least two exact sources. "
+    "Scripture grounding: write 1-2 plain sentences explaining how the retrieved citation cards support the advice; "
+    "name every exact source from Required citation anchors and reuse at least one anchor keyword from each. "
+    "When two or more citation cards are available, name at least two exact sources. "
     "Keep scripture names, chapter numbers, verse numbers, and citation labels only in Scripture grounding; "
     "do not put them in One-line summary, Reflection, Judgement, or Next step. "
     "In Scripture grounding, never mix sources: if a sentence quotes or references Romans, the sentence subject must be "
@@ -162,7 +191,9 @@ SYNTHESIS_SYSTEM_PROMPT = (
     "or help calling a doctor, social worker, or respite resource. If the user may harm themselves or cannot stay safe, "
     "tell them to contact local emergency or crisis support now. Keep business decisions secondary until immediate support "
     "and rest are in place. "
-    "For betrayal, lies, anger, or revenge questions, make the Next step calm and proportionate. The One-line summary should "
+    "For conflict questions involving betrayal, lies, revenge, retaliation, hatred, or anger toward another person, "
+    "make the Next step calm and proportionate. Plain explanation questions about anger or judgement are not "
+    "betrayal/revenge dilemmas; explain the concept without adding retaliation instructions. The One-line summary should "
     "say not to seek revenge, to protect yourself with truth and boundaries, and that forgiveness can be a later process; "
     "do not frame protection as the opposite of forgiveness. Do not say the user should choose lawful protection rather than "
     "trying to forgive. Do not use the phrase lawful protection for ordinary lies or betrayal; say truth and calm boundaries instead. "
@@ -172,6 +203,10 @@ SYNTHESIS_SYSTEM_PROMPT = (
     "Mention a trusted person or appropriate authority only if the lies affect safety, work, school, housing, or reputation; "
     "mention emergency support only for threats, stalking, or immediate danger. Do not mention legal action unless the user "
     "describes a concrete legal threat, safety threat, stalking, workplace/school action, or serious reputation harm. "
+    "For confidentiality, secret, or privacy dilemmas where keeping the secret may let someone be harmed, do not treat secrecy as absolute. "
+    "The Next step should first assess whether the harm risk is serious or immediate, then disclose only the minimum necessary information "
+    "to someone able to protect the person at risk, or seek confidential advice from a trusted responsible person if the risk is unclear. "
+    "Do not tell the user to broadcast the secret, punish the friend, or keep silent when serious harm is likely. "
     "For dropshipping or business-model scam questions, answer directly whether the business model is automatically wrong: "
     "say it is not automatically scamming, but it becomes unethical if it hides risk, misleads customers, uses unreliable "
     "fulfillment, conceals delays, refuses fair refunds, or avoids accountability. Do not assume the user has invested money, "
@@ -185,8 +220,28 @@ SYNTHESIS_SYSTEM_PROMPT = (
     "Do not include markdown, bullets, numbered steps, or generic openers like 'As you navigate'. "
     "Avoid abstract filler and ornate phrases such as 'cultivating self-awareness', 'delicate situation', 'right intention', "
     "'moral pathway', and 'may this guidance inspire you'. "
-    "The user's message contains the dynamic payload at the end: user dilemma, topic words, tone, relationship context, "
-    "retrieved citations, and citation anchors."
+    "The user's message contains the compact dynamic payload at the end: compact dilemma, topic words, tone, "
+    "relationship context, citation cards, required citation anchors, and the deterministic output skeleton."
+)
+
+MAX_SYNTHESIS_CITATIONS = 2
+MAX_SYNTHESIS_DILEMMA_CHARS = 520
+MAX_CITATION_PASSAGE_CHARS = 260
+MAX_CITATION_PRINCIPLE_CHARS = 160
+
+SYNTHESIS_OUTPUT_SKELETON = "\n".join(
+    [
+        "Summary: [direct answer in one compact sentence]",
+        "Reflection: [name the feeling or conflict without blame]",
+        "Judgement: [wisest and kindest choice; no scripture names or verse references here]",
+        "Next step: [one plain-prose action today; no extra sublabels]",
+        "Scripture grounding: [1-2 sentences naming exact citation-card source names and anchor words]",
+    ]
+)
+ORDERED_SECTION_LABELS = ["Summary", "Reflection", "Judgement", "Next step", "Scripture grounding"]
+ORDERED_SECTION_RE = re.compile(
+    r"^(summary|reflection|judg(?:e)?ment|next step|scripture grounding)\s*:\s*(.*)$",
+    re.I | re.M,
 )
 
 
@@ -248,6 +303,7 @@ async def generate_moral_pathway(
     visible_dilemma = _visible_dilemma_text(dilemma)
     safe_dilemma = normalize_harmful_framing_text(visible_dilemma)
     prompt = _build_synthesis_prompt(safe_dilemma, citations, tone_msg)
+    prompt_pack = _synthesis_prompt_pack_metrics(safe_dilemma, prompt, citations)
     started = time.perf_counter()
     system_message = SYNTHESIS_SYSTEM_PROMPT
     synthesis_options = {"temperature": 0.0, "num_predict": 520, "num_ctx": 2048}
@@ -273,7 +329,11 @@ async def generate_moral_pathway(
             )
             response.raise_for_status()
             data = response.json()
-            pathway = _clean_synthesis_output((data.get("message") or {}).get("content", ""))
+            pathway = _repair_synthesis_sections(
+                safe_dilemma,
+                citations,
+                _clean_synthesis_output((data.get("message") or {}).get("content", "")),
+            )
             if not pathway:
                 raise ValueError("Empty LLM response")
 
@@ -317,7 +377,11 @@ async def generate_moral_pathway(
                     )
                     retry_response.raise_for_status()
                     retry_data = retry_response.json()
-                    retry_pathway = _clean_synthesis_output((retry_data.get("message") or {}).get("content", ""))
+                    retry_pathway = _repair_synthesis_sections(
+                        safe_dilemma,
+                        citations,
+                        _clean_synthesis_output((retry_data.get("message") or {}).get("content", "")),
+                    )
                     retry_reason = _synthesis_rejection_reason(safe_dilemma, citations, retry_pathway)
                     if retry_pathway and not retry_reason:
                         data = retry_data
@@ -335,6 +399,7 @@ async def generate_moral_pathway(
                         "staticPromptCache": "Inactive",
                         "memoryUsageMb": None,
                         "synthesisRetry": True,
+                        "synthesisInput": prompt_pack,
                     }
                     return pathway, metrics
 
@@ -352,6 +417,7 @@ async def generate_moral_pathway(
                 "kvCacheHit": False,
                 "staticPromptCache": "Inactive",
                 "memoryUsageMb": None,
+                "synthesisInput": prompt_pack,
             }
             return pathway, metrics
     except PipelineError:
@@ -367,48 +433,135 @@ def _build_synthesis_prompt(
     tone_msg: str,
 ) -> str:
     """Constrain synthesis to the dilemma and retrieved citations so guidance stays grounded."""
-    dilemma = _visible_dilemma_text(dilemma)
-    citation_lines = []
-    anchor_lines = []
-    for idx, citation in enumerate(citations[:3], start=1):
-        # Anchor keywords give the synthesizer concrete terms it must reuse when
-        # explaining how scripture supports the practical advice.
-        keywords = [
-            str(keyword).strip().lower()
-            for keyword in citation.get("keywords", [])[:4]
-            if str(keyword).strip()
-        ]
-        citation_label = _citation_reference_label(citation)
-        citation_lines.append(
-            f"{idx}. [{citation.get('faith')}] {citation_label} — "
-            f"\"{citation.get('translation')}\""
-        )
-        anchor_lines.append(
-            f"{idx}. {citation_label} anchors: {', '.join(keywords) if keywords else citation.get('source')}"
-        )
-    citations_block = "\n".join(citation_lines)
+    visible_dilemma = _visible_dilemma_text(dilemma)
+    compact_dilemma = _compact_synthesis_context(visible_dilemma)
+    citation_cards, anchor_lines = _build_citation_cards(citations)
+    citations_block = "\n".join(citation_cards)
     anchors_block = "\n".join(anchor_lines)
     tone = tone_msg or "Balanced guidance mode"
-    focus_terms = _query_focus_terms(dilemma)
+    focus_terms = _query_focus_terms(visible_dilemma)
     focus_block = ", ".join(focus_terms) if focus_terms else "the user's exact dilemma"
-    relationship_context = _relationship_role_context(dilemma)
+    relationship_context = _relationship_role_context(visible_dilemma)
     return (
-        f"Dilemma:\n{dilemma}\n\n"
+        "Task:\n"
+        "Fill the deterministic output skeleton. Do not add headings, bullets, markdown, citations, or new labels. "
+        "Replace bracketed helper text with final user-facing wording.\n\n"
+        f"Compact dilemma:\n{compact_dilemma}\n\n"
         f"User-topic words:\n{focus_block}\n\n"
         f"Tone mode: {tone}\n\n"
         f"Relationship context: {relationship_context}\n\n"
-        f"Retrieved scriptures:\n{citations_block}\n\n"
-        f"Citation anchors:\n{anchors_block}"
+        f"Citation cards:\n{citations_block}\n\n"
+        f"Required citation anchors:\n{anchors_block}\n\n"
+        "Rules:\n"
+        "- Use scripture source names, chapters, verses, and citation labels only in Scripture grounding.\n"
+        "- In Scripture grounding, name each source from Required citation anchors and reuse at least one anchor word for each.\n"
+        "- Keep Judgement practical and source-free.\n\n"
+        f"Deterministic output skeleton:\n{SYNTHESIS_OUTPUT_SKELETON}"
     )
+
+
+def _build_citation_cards(citations: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    cards: list[str] = []
+    anchor_lines: list[str] = []
+    for idx, citation in enumerate(citations[:MAX_SYNTHESIS_CITATIONS], start=1):
+        keywords = _citation_anchor_keywords(citation)
+        citation_label = _citation_reference_label(citation)
+        passage = _truncate_for_prompt(str(citation.get("translation") or ""), MAX_CITATION_PASSAGE_CHARS)
+        principle = _citation_principle(citation, keywords)
+        anchors = ", ".join(keywords) if keywords else str(citation.get("source") or "retrieved scripture")
+        cards.append(
+            "\n".join(
+                [
+                    f"{idx}. Source: {citation_label}",
+                    f"   Faith: {citation.get('faith') or 'unspecified'}",
+                    f"   Passage: \"{passage}\"",
+                    f"   Anchors to reuse: {anchors}",
+                    f"   Principle: {principle}",
+                ]
+            )
+        )
+        anchor_lines.append(f"{idx}. {citation_label} anchors: {anchors}")
+    return cards, anchor_lines
+
+
+def _citation_anchor_keywords(citation: dict[str, Any]) -> list[str]:
+    keywords: list[str] = []
+    for keyword in citation.get("keywords", [])[:4]:
+        normalized = str(keyword).strip().lower()
+        if normalized and normalized not in keywords:
+            keywords.append(normalized)
+    return keywords
+
+
+def _citation_principle(citation: dict[str, Any], keywords: list[str]) -> str:
+    context = _truncate_for_prompt(str(citation.get("context") or ""), MAX_CITATION_PRINCIPLE_CHARS)
+    if context:
+        return context
+    if keywords:
+        return f"Use this card for: {', '.join(keywords)}."
+    return "Use only the passage and exact source name from this card."
+
+
+def _compact_synthesis_context(dilemma: str) -> str:
+    text = re.sub(r"\s+", " ", _visible_dilemma_text(dilemma)).strip()
+    if len(text) <= MAX_SYNTHESIS_DILEMMA_CHARS:
+        return text
+
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    kept: list[str] = []
+    for sentence in sentences:
+        if not sentence:
+            continue
+        candidate = " ".join([*kept, sentence]).strip()
+        if len(candidate) > MAX_SYNTHESIS_DILEMMA_CHARS:
+            break
+        kept.append(sentence)
+    compact = " ".join(kept).strip() or text[:MAX_SYNTHESIS_DILEMMA_CHARS]
+    if "?" in text and "?" not in compact:
+        question_tail = text.rsplit("?", 1)[0].rsplit(".", 1)[-1].strip()
+        if question_tail:
+            compact = _truncate_for_prompt(f"{compact} {question_tail}?", MAX_SYNTHESIS_DILEMMA_CHARS)
+    return compact.rstrip(" ,;:") + ("..." if len(compact) < len(text) and not compact.endswith("...") else "")
+
+
+def _truncate_for_prompt(value: str, max_chars: int) -> str:
+    text = re.sub(r"\s+", " ", value).strip()
+    if len(text) <= max_chars:
+        return text
+    truncated = text[: max_chars - 3].rsplit(" ", 1)[0].strip()
+    return f"{truncated}..." if truncated else text[:max_chars]
+
+
+def _synthesis_prompt_pack_metrics(dilemma: str, prompt: str, citations: list[dict[str, Any]]) -> dict[str, Any]:
+    visible_dilemma = _visible_dilemma_text(dilemma)
+    compact_dilemma = _compact_synthesis_context(visible_dilemma)
+    original_context_tokens = max(1, len(visible_dilemma) // 4)
+    compact_context_tokens = max(1, len(compact_dilemma) // 4)
+    packed_prompt_tokens = max(1, len(prompt) // 4)
+    return {
+        "method": "deterministic_context_pack",
+        "citationCards": min(len(citations), MAX_SYNTHESIS_CITATIONS),
+        "contextTokensApprox": original_context_tokens,
+        "compactContextTokensApprox": compact_context_tokens,
+        "packedPromptTokensApprox": packed_prompt_tokens,
+        "contextCompressionRatio": f"{original_context_tokens / max(compact_context_tokens, 1):.1f}x",
+    }
 
 
 def _citation_reference_label(citation: dict[str, Any]) -> str:
     parts = [
-        str(citation.get("source") or "").strip(),
-        str(citation.get("chapter") or "").strip(),
-        str(citation.get("verse") or "").strip(),
+        _clean_citation_label_part(str(citation.get("source") or "").strip()),
+        _clean_citation_label_part(str(citation.get("chapter") or "").strip()),
+        _clean_citation_label_part(str(citation.get("verse") or "").strip()),
     ]
     return ", ".join(part for part in parts if part) or "retrieved scripture"
+
+
+def _clean_citation_label_part(value: str) -> str:
+    text = re.sub(r"\s+", " ", str(value or "")).strip()
+    text = re.sub(r"(?:\[NAME_REDACTED\]|the other person)\s*(?=(?:Al-)?Quran\b|Quran\b|Ma['’]idah\b)", "", text, flags=re.I)
+    text = re.sub(r"^(?:the other person|\[NAME_REDACTED\])\s*", "", text)
+    return text.strip(" ,")
 
 
 def _clean_synthesis_output(pathway: str) -> str:
@@ -490,7 +643,332 @@ def _normalize_answer_section_labels(lines: list[str]) -> str:
         normalized.append(line)
 
     flush_summary()
-    return "\n".join(_merge_duplicate_answer_sections(normalized))
+    return "\n".join(_render_ordered_synthesis_sections(_merge_duplicate_answer_sections(normalized)))
+
+
+def _render_ordered_synthesis_sections(lines: list[str]) -> list[str]:
+    sections: dict[str, str] = {}
+    current_label = ""
+    for line in lines:
+        match = ORDERED_SECTION_RE.match(line)
+        if match:
+            raw_label = match.group(1).lower()
+            label = "Judgement" if raw_label in {"judgement", "judgment"} else BARE_ANSWER_LABELS.get(raw_label, "Summary")
+            if raw_label == "summary":
+                label = "Summary"
+            text = match.group(2).strip()
+            sections[label] = f"{sections.get(label, '').rstrip()} {text}".strip() if sections.get(label) else text
+            current_label = label
+            continue
+        if current_label and line.strip():
+            sections[current_label] = f"{sections[current_label].rstrip()} {line.strip()}".strip()
+
+    if not sections:
+        return lines
+    return [f"{label}: {sections[label]}" if sections.get(label) else f"{label}:" for label in ORDERED_SECTION_LABELS if label in sections]
+
+
+def _parse_synthesis_sections(pathway: str) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    current_label = ""
+    for raw_line in str(pathway or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = ORDERED_SECTION_RE.match(line)
+        if match:
+            raw_label = match.group(1).lower()
+            label = "Judgement" if raw_label in {"judgement", "judgment"} else BARE_ANSWER_LABELS.get(raw_label, "Summary")
+            if raw_label == "summary":
+                label = "Summary"
+            sections[label] = match.group(2).strip()
+            current_label = label
+            continue
+        if current_label:
+            sections[current_label] = f"{sections.get(current_label, '').rstrip()} {line}".strip()
+    return sections
+
+
+def _render_synthesis_sections(sections: dict[str, str]) -> str:
+    return "\n".join(
+        f"{label}: {sections[label]}" if sections.get(label) else f"{label}:"
+        for label in ORDERED_SECTION_LABELS
+        if label in sections
+    )
+
+
+def _repair_synthesis_sections(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> str:
+    sections = _parse_synthesis_sections(pathway)
+    if not sections:
+        return pathway
+    if _is_confidentiality_safety_dilemma(dilemma):
+        sections = _repair_confidentiality_safety_sections(sections)
+    if _is_friend_repair_follow_up_dilemma(dilemma):
+        sections = _repair_friend_follow_up_sections(sections)
+    if "Next step" in sections:
+        sections["Next step"] = _repair_next_step_for_dilemma(dilemma, sections["Next step"])
+    if "Scripture grounding" in sections:
+        sections["Scripture grounding"] = _deterministic_scripture_grounding(dilemma, citations)
+    return _render_synthesis_sections(sections)
+
+
+def _repair_confidentiality_safety_sections(sections: dict[str, str]) -> dict[str, str]:
+    repaired = {**sections}
+    repaired["Summary"] = (
+        "Do not treat confidentiality as absolute if keeping a secret may allow real harm; protect safety with the least necessary disclosure."
+    )
+    repaired["Reflection"] = (
+        "This is hard because loyalty to a friend's trust is pulling against responsibility for someone who may be hurt."
+    )
+    repaired["Judgement"] = (
+        "The wisest and kindest choice is to protect the person at risk while sharing only what is needed with someone able to help."
+    )
+    repaired["Next step"] = (
+        "Today, decide whether the risk is serious or immediate. If someone may be harmed, tell only the person best able to protect them, "
+        "using the minimum necessary facts; if the risk is unclear, ask a trusted responsible adult, supervisor, counselor, or appropriate safety contact for confidential guidance."
+    )
+    return repaired
+
+
+def _repair_friend_follow_up_sections(sections: dict[str, str]) -> dict[str, str]:
+    repaired = {**sections}
+    repaired["Summary"] = (
+        "After you told the truth and your friend stopped talking, the kindest repair is accountability without pressure: offer one calm message, then give your friend space."
+    )
+    repaired["Reflection"] = (
+        "It hurts when honesty leads to silence, but your friend's distance may be their way of processing what happened."
+    )
+    repaired["Judgement"] = (
+        "The wisest choice is to respect their space while staying ready to repair the harm without defending yourself or forcing a response."
+    )
+    repaired["Next step"] = (
+        "Today, send one short message that accepts the hurt, says you will give them space, and leaves the door open to talk when they are ready. "
+        "After that, stop repeating the apology for now; if some time passes, make one gentle check-in without demanding forgiveness."
+    )
+    return repaired
+
+
+def _repair_next_step_for_dilemma(dilemma: str, next_step: str) -> str:
+    visible = _visible_dilemma_text(dilemma)
+    lower_dilemma = visible.lower()
+    lower_step = str(next_step or "").lower()
+    has_relationship_context = bool(_relationship_role_groups(visible))
+    template_style_leak = bool(
+        re.search(
+            r"\b(?:preparation detail|calm follow[- ]through|before calling|immediate solutions|brainstorm ways)\b",
+            lower_step,
+        )
+    )
+    invented_conversation = (
+        not has_relationship_context
+        and (
+            re.search(
+                r"\b(friend|family member|trusted person|other person|they do not listen|they don't listen|call(?:ing)?|conversation)\b",
+                lower_step,
+            )
+            or "before our conversation" in lower_step
+            or "emotional support" in lower_step
+        )
+    )
+    explanation_query = _is_explanation_style_query(visible)
+    if explanation_query and invented_conversation:
+        return _explanation_next_step_for_query(visible)
+
+    cleaned_next_step = _strip_next_step_template_sublabels(next_step)
+    if explanation_query and template_style_leak:
+        return cleaned_next_step
+    self_regulation_query = any(
+        phrase in lower_dilemma
+        for phrase in [
+            "patience",
+            "things don't go my way",
+            "things do not go my way",
+            "discipline",
+            "disciplined",
+            "self-control",
+            "anxiety",
+            "worry",
+        ]
+    )
+    if invented_conversation and _is_gift_time_money_choice(visible):
+        return (
+            "Today, choose one specific way to give time, such as a visit, shared meal, call, or helping with something "
+            "they care about. If time is not possible, give a modest useful gift with a personal note, keeping the focus "
+            "on care rather than price."
+        )
+    if invented_conversation and not self_regulation_query:
+        return _choice_next_step_for_query(visible)
+    if self_regulation_query and (
+        template_style_leak
+        or re.search(r"\b(friend|family member|conversation|calling?|emotional support)\b", lower_step)
+    ):
+        return (
+            "Today, pause for one minute before reacting, name one thing outside your control, and choose one small duty "
+            "you can do with care. If frustration returns, repeat the pause and adjust the next action instead of forcing the outcome."
+        )
+    return cleaned_next_step
+
+
+def _is_explanation_style_query(dilemma: str) -> bool:
+    lower = _visible_dilemma_text(dilemma).lower()
+    return bool(re.search(r"\b(?:explain|what is|what does|meaning of|define)\b", lower))
+
+
+def _explanation_next_step_for_query(dilemma: str) -> str:
+    focus_terms = _query_focus_terms(dilemma)
+    topic = " and ".join(focus_terms[:2]) if focus_terms else "this teaching"
+    return (
+        f"Today, connect {topic} to one real choice: pause, ask what would be truthful and kind, "
+        "and take one small action that fits. If it still feels abstract, bring one concrete situation "
+        "to Anayaa instead of staying with a general explanation."
+    )
+
+
+def _is_gift_time_money_choice(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    return bool(
+        re.search(r"\b(?:gift|give|giving)\b", lower)
+        and "time" in lower
+        and re.search(r"\b(?:money|wealth|material)\b", lower)
+    )
+
+
+def _is_confidentiality_safety_dilemma(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    confidentiality_terms = re.search(r"\b(?:confidential|confidentiality|secret|privacy|private|trust)\b", lower)
+    safety_terms = re.search(r"\b(?:harm|harmed|harmful|hurt|hurting|danger|dangerous|unsafe|safety|risk|protect)\b", lower)
+    disclosure_terms = re.search(r"\b(?:break|tell|disclose|share|reveal|keep|keeping|hide|hiding)\b", lower)
+    return bool(confidentiality_terms and safety_terms and disclosure_terms)
+
+
+def _is_friend_repair_follow_up_dilemma(dilemma: str) -> bool:
+    visible = _visible_dilemma_text(dilemma).lower()
+    current = _current_dilemma_text(dilemma).lower()
+    friend_terms = re.search(r"\bfriend\b", visible)
+    repair_context = re.search(r"\b(?:truth|truthful|told the truth|lie|lied|apolog(?:y|ize|ized)|sorry|guilt|guilty|repair)\b", visible)
+    silence_terms = re.search(
+        r"\b(?:stopped talking|stop talking|not talking|won't talk|wouldn't talk|silent|silence|ignoring|ignored|no response|space)\b",
+        current,
+    )
+    return bool(friend_terms and repair_context and silence_terms)
+
+
+def _choice_next_step_for_query(dilemma: str) -> str:
+    focus_terms = _query_focus_terms(dilemma)
+    topic = " and ".join(focus_terms[:2]) if focus_terms else "the two options"
+    return (
+        f"Today, compare {topic} by asking which option serves the real person and the real duty best. "
+        "Then choose one small concrete action that expresses care without trying to prove your worth."
+    )
+
+
+def _strip_next_step_template_sublabels(next_step: str) -> str:
+    text = str(next_step or "").strip()
+    text = re.sub(r"\bPreparation detail\s*:\s*", "", text, flags=re.I)
+    text = re.sub(r"\bCalm follow[- ]through(?:\s+if[^:]{0,80})?\s*:\s*", "", text, flags=re.I)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _deterministic_scripture_grounding(dilemma: str, citations: list[dict[str, Any]]) -> str:
+    grounded_parts: list[str] = []
+    for citation in citations[:MAX_SYNTHESIS_CITATIONS]:
+        label = _citation_reference_label(citation)
+        anchors = _citation_anchor_keywords(citation)
+        anchor_text = " and ".join(anchors[:2]) if anchors else "the retrieved passage"
+        grounded_parts.append(f"{label} emphasizes {anchor_text}")
+    if not grounded_parts:
+        return "The retrieved scripture evidence was not available, so Anayaa cannot add a grounded scripture explanation."
+    if len(grounded_parts) == 1:
+        return f"{grounded_parts[0]}, which supports acting carefully and keeping the next step grounded in that teaching."
+    if _is_job_security_purpose_choice(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support weighing security alongside purpose, then choosing the offer that lets you act responsibly and meaningfully."
+        )
+    if _is_gift_time_money_choice(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support choosing a gift by care, presence, and responsibility rather than by material value alone."
+        )
+    if _is_investment_risk_dilemma(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support treating wealth and opportunity with restraint, weighing risk, duty, and real needs before committing everything."
+        )
+    if _is_confidentiality_safety_dilemma(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support honoring trust with care while protecting people from harm through limited, responsible disclosure."
+        )
+    if _is_friend_repair_follow_up_dilemma(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support honest repair, patient restraint, and care for the friendship without forcing a response."
+        )
+    if _is_ai_moral_decision_dilemma(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support using AI as a tool for reflection while keeping moral responsibility, justice, and accountability with the person making the choice."
+        )
+    if _is_truthfulness_dilemma(dilemma):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support turning away from repeated falsehood and choosing honesty, accountability, and repair."
+        )
+    if any(
+        phrase in _visible_dilemma_text(dilemma).lower()
+        for phrase in ["patience", "things don't go my way", "things do not go my way"]
+    ):
+        return (
+            f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+            "Together, these citations support taking the next right action patiently while staying responsible for effort rather than controlling every outcome."
+        )
+    return (
+        f"{grounded_parts[0]}, while {grounded_parts[1]}. "
+        "Together, these citations support choosing a practical next action that honors responsibility, care, and the real choice in front of the user."
+    )
+
+
+def _is_job_security_purpose_choice(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    return bool(
+        re.search(r"\b(?:job|career|work|offer|offers|livelihood)\b", lower)
+        and "security" in lower
+        and "purpose" in lower
+    )
+
+
+def _is_truthfulness_dilemma(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    return bool(
+        re.search(
+            r"\b(?:lie|lies|lied|lying|liar|falsehood|falsehoods|dishonest|dishonesty|truth|truthful|caught)\b",
+            lower,
+        )
+    )
+
+
+def _is_investment_risk_dilemma(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    investment_terms = re.search(r"\b(?:invest|investing|investment|crypto|opportunity|savings?)\b", lower)
+    concentration_terms = re.search(r"\b(?:everything|all|entire|one|single|only|risk|risky|wealth|money)\b", lower)
+    return bool(investment_terms and concentration_terms)
+
+
+def _is_ai_moral_decision_dilemma(dilemma: str) -> bool:
+    lower = _current_dilemma_text(dilemma).lower()
+    return bool(
+        re.search(r"\b(?:ai|artificial intelligence|algorithm|machine)\b", lower)
+        and re.search(r"\b(?:moral|ethical|ethics|decision|decisions|choose|choice)\b", lower)
+    )
+
+
+def _current_dilemma_text(dilemma: str) -> str:
+    visible = _visible_dilemma_text(dilemma)
+    match = re.search(r"\bFollow-up question:\s*(?P<current>.+)$", visible, flags=re.I)
+    if match:
+        return match.group("current").strip(" .?!")
+    return visible
 
 
 def _merge_duplicate_answer_sections(lines: list[str]) -> list[str]:
@@ -541,6 +1019,9 @@ def _visible_dilemma_text(dilemma: str) -> str:
     match = DHARMA_FRAME_RE.match(text)
     if match:
         return match.group("situation").strip(" .?!")
+    match = TERSE_CHOICE_FRAME_RE.match(text)
+    if match:
+        return match.group("situation").strip(" .?!")
     match = IDENTITY_FRAME_RE.match(text)
     if match:
         return f"{match.group('situation')}; {match.group('terms')}".strip(" .?!")
@@ -558,13 +1039,16 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "could",
         "dharma",
         "dilemma",
+        "decision",
         "facts",
+        "guide",
         "harmful",
         "inventing",
         "kindest",
         "least",
         "missing",
         "most",
+        "people",
         "provided",
         "situation",
         "their",
@@ -573,6 +1057,10 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "this",
         "those",
         "through",
+        "between",
+        "choice",
+        "define",
+        "offers",
         "under",
         "understand",
         "user",
@@ -589,6 +1077,10 @@ def _query_focus_terms(dilemma: str) -> list[str]:
         "want",
         "feel",
         "help",
+        "explain",
+        "meaning",
+        "simple",
+        "words",
     }
     terms = []
     for term in re.findall(r"\b[a-zA-Z][a-zA-Z]{3,}\b", dilemma.lower()):
@@ -603,6 +1095,8 @@ def _relationship_role_groups(dilemma: str) -> set[str]:
     for group, terms in RELATIONSHIP_ROLE_GROUPS.items():
         if any(re.search(rf"\b{re.escape(term)}\b", text) for term in terms):
             groups.add(group)
+    if _has_caregiver_parent_context(text):
+        groups.add("parent")
     return groups
 
 
@@ -612,7 +1106,10 @@ def _relationship_role_context(dilemma: str) -> str:
         return "No specific relationship role is confirmed."
 
     allowed = ", ".join(RELATIONSHIP_ROLE_DISPLAY[group] for group in sorted(groups))
-    return f"Known relationship roles from the dilemma: {allowed}."
+    context = f"Known relationship roles from the dilemma: {allowed}."
+    if "parent" in groups and _has_caregiver_parent_context(dilemma):
+        context += " Parent-care wording is allowed because the dilemma is about caregiving duties."
+    return context
 
 
 def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway: str) -> bool:
@@ -625,6 +1122,8 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
             _is_betrayal_revenge_dilemma(dilemma) and _is_betrayal_revenge_pathway_relevant(pathway)
         ) and not (
             _is_caregiver_burnout_dilemma(dilemma) and _is_caregiver_burnout_pathway_relevant(pathway)
+        ) and not (
+            _is_friend_repair_follow_up_dilemma(dilemma) and _is_friend_repair_pathway_relevant(pathway)
         ):
             return False
 
@@ -642,6 +1141,8 @@ def _is_summary_relevant(dilemma: str, citations: list[dict[str, Any]], pathway:
     if not citation_terms or any(term in pathway_lower for term in citation_terms[:8]):
         return True
     if _is_caregiver_burnout_dilemma(dilemma) and _is_caregiver_burnout_pathway_relevant(pathway):
+        return True
+    if _is_friend_repair_follow_up_dilemma(dilemma) and _is_friend_repair_pathway_relevant(pathway):
         return True
     return _is_betrayal_revenge_dilemma(dilemma) and _betrayal_revenge_citation_grounded(citations, pathway)
 
@@ -733,6 +1234,18 @@ def _is_betrayal_revenge_pathway_relevant(pathway: str) -> bool:
         "contact",
     }
     return any(term in lower for term in harm_terms) and any(term in lower for term in response_terms)
+
+
+def _is_friend_repair_pathway_relevant(pathway: str) -> bool:
+    lower = pathway.lower()
+    relationship_terms = {"friend", "friendship"}
+    repair_terms = {"truth", "truthful", "accountability", "apology", "apologize", "repair", "hurt"}
+    restraint_terms = {"space", "without pressure", "gentle check-in", "ready", "forcing", "response"}
+    return (
+        any(term in lower for term in relationship_terms)
+        and any(term in lower for term in repair_terms)
+        and any(term in lower for term in restraint_terms)
+    )
 
 
 def _betrayal_revenge_citation_grounded(citations: list[dict[str, Any]], pathway: str) -> bool:
@@ -976,10 +1489,49 @@ def _contains_prompt_like_response_text(pathway: str) -> bool:
 
 def _unsupported_relationship_drift(dilemma: str, pathway: str) -> bool:
     allowed_groups = _relationship_role_groups(dilemma)
+    caregiver_parent_context = _has_caregiver_parent_context(dilemma)
+    if caregiver_parent_context:
+        allowed_groups.add("parent")
     for group, pattern in RELATIONSHIP_DRIFT_PATTERNS.items():
-        if group not in allowed_groups and pattern.search(str(pathway or "")):
+        if group in allowed_groups:
+            continue
+        for match in pattern.finditer(str(pathway or "")):
+            if caregiver_parent_context and _is_caregiver_support_helper_reference(pathway, match.start(), match.end()):
+                continue
             return True
     return False
+
+
+def _is_caregiver_support_helper_reference(pathway: str, start: int, end: int) -> bool:
+    """Allow possible helpers in caregiver next steps without treating them as confirmed roles."""
+    text = str(pathway or "")
+    if _section_label_at(text, start) != "next step":
+        return False
+    window = text[max(0, start - 120) : min(len(text), end + 160)].lower()
+    support_actions = {
+        "ask",
+        "call",
+        "contact",
+        "reach out",
+        "tell",
+        "request",
+        "help",
+        "support",
+        "cover",
+        "coverage",
+        "relief",
+    }
+    return any(term in window for term in support_actions)
+
+
+def _section_label_at(pathway: str, index: int) -> str:
+    labels = list(ORDERED_SECTION_RE.finditer(str(pathway or "")))
+    active = ""
+    for match in labels:
+        if match.start() > index:
+            break
+        active = match.group(1).lower()
+    return "judgement" if active in {"judgement", "judgment"} else active
 
 
 def _business_integrity_answer_drifted(pathway: str) -> bool:
@@ -1055,3 +1607,10 @@ def _is_caregiver_burnout_dilemma(value: str) -> bool:
     caregiver_terms = {"parent", "sick", "care", "caregiver", "caring"}
     exhaustion_terms = {"burned out", "burnt out", "burnout", "hopeless", "exhausted", "giving up", "overwhelmed"}
     return any(term in lower for term in caregiver_terms) and any(term in lower for term in exhaustion_terms)
+
+
+def _has_caregiver_parent_context(value: str) -> bool:
+    lower = _visible_dilemma_text(value).lower()
+    parent_terms = {"parent", "parents", "mother", "father", "mom", "dad"}
+    caregiver_terms = {"care", "caregiver", "caring", "sick", "duties", "duty", "share"}
+    return any(term in lower for term in parent_terms) and any(term in lower for term in caregiver_terms)

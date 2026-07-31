@@ -41,6 +41,7 @@ QUERY_STOPWORDS = {
     "want",
     "feel",
     "help",
+    "people",
 }
 
 UNSUPPORTED_ASSUMPTION_PATTERNS = [
@@ -61,6 +62,10 @@ UNSUPPORTED_ASSUMPTION_PATTERNS = [
 TERM_ALIASES = {
     "disciplined": ["discipline", "self-control"],
     "discipline": ["disciplined", "self-control"],
+    "grudge": ["grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "grudges": ["grudge", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentment": ["grudge", "grudges", "forgiveness", "anger", "hurt", "attachment", "hatred"],
+    "resentments": ["grudge", "grudges", "resentment", "forgiveness", "anger", "hurt", "attachment", "hatred"],
     "scamming": ["scam"],
     "scam": ["scamming"],
     "lying": ["lie", "lied", "truth"],

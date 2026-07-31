@@ -20,6 +20,16 @@ from app.security.sanitizer import sanitize_query
 
 router = APIRouter(prefix="/api", tags=["query"])
 
+REDACTION_MARKERS = {
+    "name": "[NAME_REDACTED]",
+    "email": "[EMAIL_REDACTED]",
+    "phone": "[PHONE_REDACTED]",
+    "ssn": "[SSN_REDACTED]",
+    "patientId": "[PATIENT_ID_REDACTED]",
+    "location": "[LOCATION_REDACTED]",
+    "url": "[URL_REDACTED]",
+}
+
 
 class PreviousContextBody(BaseModel):
     question: str = Field(min_length=1, max_length=800)
@@ -54,6 +64,49 @@ def _prepare_previous_context(items: list[PreviousContextBody]) -> dict[str, Any
     return {"turns": turns} if turns else None
 
 
+def _redaction_counts(text: str) -> dict[str, int]:
+    return {
+        label: str(text or "").count(marker)
+        for label, marker in REDACTION_MARKERS.items()
+    }
+
+
+def _merge_redaction_counts(items: list[dict[str, int]]) -> dict[str, int]:
+    return {
+        label: sum(item.get(label, 0) for item in items)
+        for label in REDACTION_MARKERS
+    }
+
+
+def _privacy_scrub_trace(
+    *,
+    raw_query: str,
+    scrubbed_query: str,
+    sensitive_names: list[str],
+    previous_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    previous_turns = (previous_context or {}).get("turns") or []
+    previous_counts = [
+        _redaction_counts(str(turn.get("question") or ""))
+        for turn in previous_turns
+        if isinstance(turn, dict)
+    ]
+    query_counts = _redaction_counts(scrubbed_query)
+    total_counts = _merge_redaction_counts([query_counts, *previous_counts])
+    return {
+        "stage": "pre_planner",
+        "rawQueryLength": len(raw_query or ""),
+        "scrubbedQueryLength": len(scrubbed_query or ""),
+        "detectedSensitiveNameCount": len(sensitive_names),
+        "queryRedactionCounts": query_counts,
+        "previousContextTurnCount": len(previous_turns),
+        "previousContextRedactionCounts": _merge_redaction_counts(previous_counts),
+        "totalRedactionCounts": total_counts,
+        "totalRedactions": sum(total_counts.values()),
+        "plannerInputScrubbed": True,
+    }
+
+
 async def _finalize_request_eco(pg, request_id: str, user_email: str, eco: EcoTracker, cache_hit: bool) -> dict[str, Any]:
     totals = eco.totals()
     await persist_request_eco(pg, request_id, user_email, totals["ecoBreakdown"], cache_hit)
@@ -72,6 +125,27 @@ def _pipeline_error_content(exc: PipelineError, request_id: str, eco: EcoTracker
         "cacheHit": False,
         "powerMetrics": eco.audit_power_footprint(False, 0),
         "ecoBreakdown": totals["ecoBreakdown"],
+    }
+
+
+def _transaction_retry_details(result: dict[str, Any]) -> dict[str, Any]:
+    loop = result.get("loopDetails") or {}
+    turns = int(loop.get("turns") or 0)
+    attempts = max(turns - 1, 0)
+    turns_log = [str(item) for item in loop.get("turnsLog") or []]
+    retry_events = [
+        item
+        for item in turns_log
+        if "retry" in item.lower() or "repair" in item.lower()
+    ]
+    return {
+        "mode": loop.get("mode"),
+        "turns": turns,
+        "maxTurns": int(loop.get("maxTurns") or 0),
+        "attempts": attempts,
+        "recovered": bool(attempts and result.get("status") == "completed"),
+        "loopLimitTriggered": bool(loop.get("loopLimitTriggered", False)),
+        "events": retry_events,
     }
 
 
@@ -95,12 +169,29 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
     sensitive_names = detect_sensitive_names(raw_query)
     security = run_security_firewall(raw_query)
     if not security.passed:
-        blocked = log_transaction(user["email"], f"[REJECTED FIREWALL] {scrub_pii(raw_query, extra_names=sensitive_names)}", 0, False, 0, 0)
+        scrubbed_blocked_query = scrub_pii(raw_query, extra_names=sensitive_names)
+        previous_context = _prepare_previous_context(body.previousContext)
+        privacy_trace = _privacy_scrub_trace(
+            raw_query=raw_query,
+            scrubbed_query=scrubbed_blocked_query,
+            sensitive_names=sensitive_names,
+            previous_context=previous_context,
+        )
+        blocked = log_transaction(
+            user["email"],
+            f"[REJECTED FIREWALL] {scrubbed_blocked_query}",
+            0,
+            False,
+            0,
+            0,
+            privacy_trace=privacy_trace,
+        )
         return JSONResponse(
             status_code=403,
             content=scrub_pii_deep({
                 "error": "Regex Firewall alert! Dangerous signatures blocked.",
                 "violations": security.violations,
+                "privacyTrace": privacy_trace,
                 "transactionLog": blocked,
             }, extra_names=sensitive_names),
         )
@@ -108,6 +199,12 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
     # The workflow receives scrubbed text so planners and traces avoid direct identifiers.
     scrubbed = scrub_pii(_model_facing_firewall_text(security.sanitized), extra_names=sensitive_names)
     previous_context = _prepare_previous_context(body.previousContext)
+    privacy_trace = _privacy_scrub_trace(
+        raw_query=raw_query,
+        scrubbed_query=scrubbed,
+        sensitive_names=sensitive_names,
+        previous_context=previous_context,
+    )
     request_id = new_request_id()
     eco = EcoTracker(request_id=request_id)
     await pg.execute(
@@ -148,8 +245,11 @@ async def query(body: QueryBody, request: Request, user=Depends(require_auth)):
         result.get("cacheHit", False),
         result.get("confidence", 0),
         co2,
+        retry_details=_transaction_retry_details(result),
+        privacy_trace=privacy_trace,
     )
     result["transactionLog"] = trans
+    result["privacyTrace"] = privacy_trace
 
     await _finalize_request_eco(pg, request_id, user["email"], eco, result.get("cacheHit", False))
 
