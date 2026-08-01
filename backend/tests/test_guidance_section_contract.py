@@ -5,6 +5,7 @@ from app.llm.generator import (
     SYNTHESIS_SYSTEM_PROMPT,
     _build_synthesis_prompt,
     _clean_synthesis_output,
+    _deterministic_scripture_grounding,
     _is_caregiver_burnout_dilemma,
     _query_focus_terms,
     _relationship_role_groups,
@@ -52,6 +53,31 @@ def test_synthesis_prompt_uses_restored_summary_section_tone():
     assert "Write exactly these 5 labeled sections" not in prompt
     assert "Start with a practical verb" not in prompt
     assert "situation-specific moral stance" not in SYNTHESIS_SYSTEM_PROMPT
+
+
+def test_scripture_grounding_avoids_repeated_titles_and_anchors():
+    grounding = _deterministic_scripture_grounding(
+        "How can I handle a disagreement with someone compassionately?",
+        [
+            {
+                "source": "Sutta Nipata: Karaniya Metta Sutta",
+                "chapter": "Metta Sutta",
+                "verse": "Verse 3-4",
+                "keywords": ["empathy", "brotherhood", "protection", "compassion"],
+            },
+            {
+                "source": "Holy Bible: Luke",
+                "chapter": "Chapter 6",
+                "verse": "Verse 31",
+                "keywords": ["empathy", "golden rule", "fairness", "relationship"],
+            },
+        ],
+    )
+
+    assert "Sutta Nipata: Karaniya Metta Sutta, Verse 3-4" in grounding
+    assert "Karaniya Metta Sutta, Metta Sutta" not in grounding
+    assert "empathy and brotherhood" in grounding
+    assert "golden rule and fairness" in grounding
 
 
 def test_terse_job_offer_choice_uses_user_terms_for_synthesis_relevance():

@@ -1,8 +1,9 @@
 
 # Anayaa.AI - Kaggle Capstone Submission for Agents for Good
+
 ## License & AI Safety Notice
 
-This project's custom code, notebooks, and architecture are licensed under the [Creative Commons Attribution 4.0 International License](./LICENSE.txt) per Kaggle Capstone requirements.
+This project's custom code, notebooks, and architecture are licensed under the Creative Commons Attribution 4.0 International License per Kaggle Capstone requirements.
 
 However, this project interfaces with local foundational models (Meta Llama 3.2 and Alibaba Qwen) and tools which are independently governed by their respective community licenses and commercial terms. The CC-BY 4.0 license applies strictly to the logic, frontend, and pipeline configurations authored in this repository.
 
@@ -354,7 +355,7 @@ For an Ollama-style public beta, Anayaa is meant to be installed and run on the 
 First-time users start with:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.5-local-beta/scripts/install-anayaa.sh | bash
+curl -sSL https://raw.githubusercontent.com/laxmivgk/Anayaa.AI/v0.1.6-local-beta/scripts/install-anayaa.sh | bash
 anayaa setup
 anayaa serve
 ```
@@ -705,5 +706,3 @@ Review a single request path quickly by logging in, sending a query to `/api/que
 - `auditScores`
 - `auditScores.groundingContract`
 - `cacheHit`
-
-

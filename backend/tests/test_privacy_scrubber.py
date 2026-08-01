@@ -97,6 +97,21 @@ def test_output_ner_gate_redacts_model_invented_full_name():
     assert scrubbed["moralPathway"].startswith("the other person should seek support")
 
 
+def test_output_ner_gate_keeps_sutta_citation_titles():
+    scrubbed = scrub_pii_response_deep(
+        {
+            "moralPathway": (
+                "Scripture grounding: Sutta Nipata: Karaniya Metta Sutta, Verse 3-4 emphasizes empathy and brotherhood, "
+                "while Holy Bible: Luke, Chapter 6, Verse 31 emphasizes golden rule and fairness."
+            )
+        }
+    )
+
+    grounding = scrubbed["moralPathway"]
+    assert "Sutta Nipata: Karaniya Metta Sutta" in grounding
+    assert "the other person" not in grounding
+
+
 def test_scrub_pii_redacts_typo_multi_token_manager_name():
     names = detect_sensitive_names("How about my manager Sarah Jenkns?")
     scrubbed = scrub_pii_response_deep(
