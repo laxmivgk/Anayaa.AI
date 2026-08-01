@@ -385,3 +385,30 @@ def test_environment_final_rerank_surfaces_isha_upanishad_from_graph_candidates(
 
     assert any(item["verse"]["id"] == "h4" for item in merged)
     assert any(item["verse"]["id"] == "h4" for item in reranked)
+
+
+def test_climate_overwhelmed_dilemma_is_not_blocked_as_current_fact_query():
+    reranked = [
+        {
+            "score": 100,
+            "verse": {
+                "translation": "All this—whatever moves in this moving world—is enveloped by the Divine. Therefore, find your enjoyment in renunciation; do not covet what belongs to others.",
+                "context": "On greed, sustainable living, contentment, sharing wealth, and ethical wealth acquisition.",
+                "source": "Isha Upanishad",
+                "keywords": ["greed", "wealth", "sharing", "envy", "satisfaction", "materialism", "honesty"],
+            },
+        }
+    ]
+
+    reason, report = _retrieval_gate_reason(
+        "I feel overwhelmed by climate change and ecological collapse. I want to build eco-friendly habits but I feel too small to make a difference in this warming world",
+        reranked,
+        top_score=100,
+        threshold=40,
+        focus_terms=["overwhelmed", "climate", "change", "ecological", "collapse", "build"],
+    )
+
+    assert reason is None
+    assert report["unsupportedQueryReason"] is None
+    assert report["passesCitationRelevance"] is True
+

@@ -549,12 +549,19 @@ def _synthesis_prompt_pack_metrics(dilemma: str, prompt: str, citations: list[di
 
 
 def _citation_reference_label(citation: dict[str, Any]) -> str:
-    parts = [
-        _clean_citation_label_part(str(citation.get("source") or "").strip()),
-        _clean_citation_label_part(str(citation.get("chapter") or "").strip()),
-        _clean_citation_label_part(str(citation.get("verse") or "").strip()),
-    ]
+    source = _clean_citation_label_part(str(citation.get("source") or "").strip())
+    chapter = _clean_citation_label_part(str(citation.get("chapter") or "").strip())
+    verse = _clean_citation_label_part(str(citation.get("verse") or "").strip())
+    if chapter and _citation_label_part_repeats_source(chapter, source):
+        chapter = ""
+    parts = [source, chapter, verse]
     return ", ".join(part for part in parts if part) or "retrieved scripture"
+
+
+def _citation_label_part_repeats_source(part: str, source: str) -> bool:
+    normalized_part = re.sub(r"[^a-z0-9]+", " ", part.lower()).strip()
+    normalized_source = re.sub(r"[^a-z0-9]+", " ", source.lower()).strip()
+    return len(normalized_part) >= 4 and normalized_part in normalized_source
 
 
 def _clean_citation_label_part(value: str) -> str:
@@ -871,10 +878,14 @@ def _strip_next_step_template_sublabels(next_step: str) -> str:
 
 def _deterministic_scripture_grounding(dilemma: str, citations: list[dict[str, Any]]) -> str:
     grounded_parts: list[str] = []
+    used_anchors: set[str] = set()
     for citation in citations[:MAX_SYNTHESIS_CITATIONS]:
         label = _citation_reference_label(citation)
         anchors = _citation_anchor_keywords(citation)
-        anchor_text = " and ".join(anchors[:2]) if anchors else "the retrieved passage"
+        distinct_anchors = [anchor for anchor in anchors if anchor not in used_anchors]
+        selected_anchors = (distinct_anchors or anchors)[:2]
+        used_anchors.update(selected_anchors)
+        anchor_text = " and ".join(selected_anchors) if selected_anchors else "the retrieved passage"
         grounded_parts.append(f"{label} emphasizes {anchor_text}")
     if not grounded_parts:
         return "The retrieved scripture evidence was not available, so Anayaa cannot add a grounded scripture explanation."
